@@ -11,8 +11,12 @@ import com.rsps1008.stockify.data.TransactionListSnapshot
 import com.rsps1008.stockify.data.TransactionListRepository
 import com.rsps1008.stockify.data.stockCacheKey
 import com.rsps1008.stockify.data.toStockKey
+import com.rsps1008.stockify.data.dividend.CnDividendRepository
 import com.rsps1008.stockify.data.dividend.DividendInfoCacheEntry
+import com.rsps1008.stockify.data.dividend.DividendResult
 import com.rsps1008.stockify.data.dividend.YahooDividendRepository
+import com.rsps1008.stockify.data.dividend.latestCnCashDividendRecord
+import com.rsps1008.stockify.data.dividend.latestCnStockDividendRecord
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -37,10 +41,13 @@ import java.util.Locale
 data class DividendItemUiState(
     val stockCode: String,
     val stockName: String,
+    val market: String = StockMarket.TW,
     val cashDividend: Double? = null,
     val cashDividendDate: String? = null,
     val stockDividend: Double? = null,
     val stockDividendDate: String? = null,
+    val recordDate: String? = null,
+    val planProgress: String? = null,
     val lastLocalCashDividend: Double? = null,
     val lastLocalCashDividendDate: String? = null,
     val lastLocalStockDividend: Double? = null,
@@ -54,6 +61,14 @@ internal data class LocalDividendSummary(
     val lastCashDividendDate: String? = null,
     val lastStockDividend: Double? = null,
     val lastStockDividendDate: String? = null
+)
+
+/** Normalised result of a market-specific dividend lookup. */
+internal data class MarketDividendData(
+    val cashDividend: DividendResult? = null,
+    val stockDividend: DividendResult? = null,
+    val recordDate: String? = null,
+    val planProgress: String? = null
 )
 
 internal data class TransactionRevisionKey(
@@ -90,13 +105,42 @@ internal fun getDividendFetchDateString(timeMillis: Long = System.currentTimeMil
 
 internal data class TaiwanStockRef(
     val stockCode: String,
-    val stockName: String
+    val stockName: String,
+    val market: String = StockMarket.TW
 )
+
+/** Dividends are cached per market because six digit codes exist in both TW and CN. */
+internal fun dividendCacheKey(stock: TaiwanStockRef): String =
+    if (StockMarket.isCn(stock.market)) "CN:${stock.stockCode}" else stock.stockCode
 
 internal fun buildTaiwanStockRefs(
     snapshot: TransactionListSnapshot,
     accountId: Int,
     valuationDateMillis: Long
+): List<TaiwanStockRef> = buildDividendStockRefs(
+    snapshot = snapshot,
+    accountId = accountId,
+    valuationDateMillis = valuationDateMillis,
+    market = StockMarket.TW
+)
+
+/** A-share positions with a dividend row in the dividend screen. */
+internal fun buildCnStockRefs(
+    snapshot: TransactionListSnapshot,
+    accountId: Int,
+    valuationDateMillis: Long
+): List<TaiwanStockRef> = buildDividendStockRefs(
+    snapshot = snapshot,
+    accountId = accountId,
+    valuationDateMillis = valuationDateMillis,
+    market = StockMarket.CN
+)
+
+private fun buildDividendStockRefs(
+    snapshot: TransactionListSnapshot,
+    accountId: Int,
+    valuationDateMillis: Long,
+    market: String
 ): List<TaiwanStockRef> {
     val activeTransactions = if (accountId == 0) {
         snapshot.transactions
@@ -112,9 +156,10 @@ internal fun buildTaiwanStockRefs(
     return snapshot.stocks
         .asSequence()
         .filter { stock ->
-            StockMarket.isTw(stock.market) && stock.toStockKey().cacheKey() in activeStockKeys
+            StockMarket.normalize(stock.market) == market &&
+                stock.toStockKey().cacheKey() in activeStockKeys
         }
-        .map { stock -> TaiwanStockRef(stock.code, stock.name) }
+        .map { stock -> TaiwanStockRef(stock.code, stock.name, market) }
         .distinctBy { it.stockCode }
         .toList()
 }
@@ -123,6 +168,7 @@ class DividendInfoViewModel(
     private val stockRepository: StockRepository,
     private val transactionListRepository: TransactionListRepository,
     private val dividendRepository: YahooDividendRepository,
+    private val cnDividendRepository: CnDividendRepository,
     private val settingsDataStore: SettingsDataStore,
     private val currentDateProvider: () -> String = { getDividendFetchDateString() }
 ) : ViewModel() {
@@ -130,7 +176,7 @@ class DividendInfoViewModel(
     private val _dividendList = MutableStateFlow<List<DividendItemUiState>>(emptyList())
     val dividendList: StateFlow<List<DividendItemUiState>> = _dividendList.asStateFlow()
 
-    private var latestTaiwanStocks: List<TaiwanStockRef> = emptyList()
+    private var latestDividendStocks: List<TaiwanStockRef> = emptyList()
     private var latestAccountId: Int = 0
     private var currentGeneration: Long = 0L
     private var refreshJob: Job? = null
@@ -155,20 +201,24 @@ class DividendInfoViewModel(
                         snapshot = snapshot,
                         accountId = activeAccountId,
                         valuationDateMillis = System.currentTimeMillis()
+                    ) + buildCnStockRefs(
+                        snapshot = snapshot,
+                        accountId = activeAccountId,
+                        valuationDateMillis = System.currentTimeMillis()
                     )
-                    val taiwanStockKeys = stocks
-                        .map { stockCacheKey(StockMarket.TW, it.stockCode) }
+                    val dividendStockKeys = stocks
+                        .map { stockCacheKey(it.market, it.stockCode) }
                         .toSet()
                     val revisionSignature = buildTransactionRevisionSignature(
                         snapshot.transactions,
-                        taiwanStockKeys
+                        dividendStockKeys
                     )
                     DividendRefreshScope(stocks, activeAccountId, revisionSignature)
                 }
             }
                 .distinctUntilChanged()
                 .collect { scope ->
-                    latestTaiwanStocks = scope.stocks
+                    latestDividendStocks = scope.stocks
                     latestAccountId = scope.accountId
                     refreshJob?.cancel()
 
@@ -177,7 +227,8 @@ class DividendInfoViewModel(
                     _dividendList.value = scope.stocks.map { stock ->
                         DividendItemUiState(
                             stockCode = stock.stockCode,
-                            stockName = stock.stockName
+                            stockName = stock.stockName,
+                            market = stock.market
                         )
                     }
 
@@ -237,39 +288,43 @@ class DividendInfoViewModel(
             // 1. Query latest local Room dividend transactions for each stock in parallel with error isolation
             val localDividends = coroutineScope {
                 stocks.map { stock ->
-                    async { stock.stockCode to fetchLocalDividends(stock.stockCode, accountId) }
+                    async { dividendCacheKey(stock) to fetchLocalDividends(stock.stockCode, accountId) }
                 }.awaitAll().toMap()
             }
 
             if (generation != currentGeneration || accountId != latestAccountId) return
 
-            // 2. Build initial UI items with fresh local Room data + cached Yahoo market data
+            // 2. Build initial UI items with fresh local Room data + cached market data
             val items = stocks.map { stock ->
-                val cached = cache[stock.stockCode]
-                val localResult = localDividends[stock.stockCode]
+                val key = dividendCacheKey(stock)
+                val cached = cache[key]
+                val localResult = localDividends[key]
                 val local = localResult?.getOrNull()
                 val localError = localResult?.exceptionOrNull()?.message
-                val isYahooFreshToday = cached?.lastFetchedDate == today
+                val isMarketDataFreshToday = cached?.lastFetchedDate == today
                 DividendItemUiState(
                     stockCode = stock.stockCode,
                     stockName = stock.stockName,
+                    market = stock.market,
                     cashDividend = cached?.cashDividend,
                     cashDividendDate = cached?.cashDividendDate,
                     stockDividend = cached?.stockDividend,
                     stockDividendDate = cached?.stockDividendDate,
+                    recordDate = cached?.recordDate,
+                    planProgress = cached?.planProgress,
                     lastLocalCashDividend = local?.lastCashDividend,
                     lastLocalCashDividendDate = local?.lastCashDividendDate,
                     lastLocalStockDividend = local?.lastStockDividend,
                     lastLocalStockDividendDate = local?.lastStockDividendDate,
-                    isLoading = !isYahooFreshToday,
+                    isLoading = !isMarketDataFreshToday,
                     errorMessage = localError
                 )
             }
             _dividendList.value = sortItems(items)
 
-            // 3. Only trigger Yahoo network fetch for stocks that haven't been fetched today
+            // 3. Only trigger a network fetch for stocks that haven't been fetched today
             val stocksToRefresh = stocks.filter { stock ->
-                cache[stock.stockCode]?.lastFetchedDate != today
+                cache[dividendCacheKey(stock)]?.lastFetchedDate != today
             }
 
             if (stocksToRefresh.isNotEmpty()) {
@@ -299,6 +354,7 @@ class DividendInfoViewModel(
     ) {
         val localResult = fetchLocalDividends(stock.stockCode, accountId)
         val local = localResult.getOrNull()
+        val cacheKey = dividendCacheKey(stock)
         try {
             if (generation != currentGeneration || accountId != latestAccountId) return
 
@@ -306,21 +362,25 @@ class DividendInfoViewModel(
             val requestSequence = SettingsDataStore.nextSequence()
             val requestStartTime = System.currentTimeMillis()
 
-            // Yahoo Dividends (Network)
-            val yahooDividends = yahooRequestSemaphore.withPermit {
-                dividendRepository.fetchLatestDividends(stock.stockCode)
+            // TW reads Yahoo; A-shares read Eastmoney's share bonus dataset.
+            val dividends = yahooRequestSemaphore.withPermit {
+                if (StockMarket.isCn(stock.market)) {
+                    fetchCnDividends(stock.stockCode)
+                } else {
+                    fetchYahooDividends(stock.stockCode)
+                }
             }
-            val cashResult = yahooDividends.cashDividend
-            val stockResult = yahooDividends.stockDividend
+            val cashResult = dividends.cashDividend
+            val stockResult = dividends.stockDividend
             val today = currentDateProvider()
 
             // Atomically guard and serialize cache commit
             cacheCommitMutex.withLock {
-                val lastCommitted = latestCommittedGenerations[stock.stockCode] ?: 0L
+                val lastCommitted = latestCommittedGenerations[cacheKey] ?: 0L
                 if (generation >= lastCommitted && generation == currentGeneration) {
-                    latestCommittedGenerations[stock.stockCode] = generation
+                    latestCommittedGenerations[cacheKey] = generation
                     settingsDataStore.setDividendInfoCacheEntry(
-                        stockCode = stock.stockCode,
+                        stockCode = cacheKey,
                         entry = DividendInfoCacheEntry(
                             cashDividend = cashResult?.amount,
                             cashDividendDate = cashResult?.date,
@@ -328,7 +388,9 @@ class DividendInfoViewModel(
                             stockDividendDate = stockResult?.date,
                             lastFetchedDate = today,
                             lastFetchedTimeMillis = requestStartTime,
-                            requestSequence = requestSequence
+                            requestSequence = requestSequence,
+                            recordDate = dividends.recordDate,
+                            planProgress = dividends.planProgress
                         )
                     )
                 }
@@ -340,12 +402,16 @@ class DividendInfoViewModel(
                 if (generation != currentGeneration || accountId != latestAccountId) return@update list
                 sortItems(
                     list.map { item ->
-                        if (item.stockCode == stock.stockCode) {
+                        if (item.stockCode == stock.stockCode &&
+                            StockMarket.normalize(item.market) == stock.market
+                        ) {
                             item.copy(
                                 cashDividend = cashResult?.amount,
                                 cashDividendDate = cashResult?.date,
                                 stockDividend = stockResult?.amount,
                                 stockDividendDate = stockResult?.date,
+                                recordDate = dividends.recordDate,
+                                planProgress = dividends.planProgress,
                                 lastLocalCashDividend = local?.lastCashDividend,
                                 lastLocalCashDividendDate = local?.lastCashDividendDate,
                                 lastLocalStockDividend = local?.lastStockDividend,
@@ -366,7 +432,9 @@ class DividendInfoViewModel(
             _dividendList.update { list ->
                 if (generation != currentGeneration || accountId != latestAccountId) return@update list
                 list.map { item ->
-                    if (item.stockCode == stock.stockCode) {
+                    if (item.stockCode == stock.stockCode &&
+                        StockMarket.normalize(item.market) == stock.market
+                    ) {
                         item.copy(
                             lastLocalCashDividend = local?.lastCashDividend,
                             lastLocalCashDividendDate = local?.lastCashDividendDate,
@@ -383,8 +451,37 @@ class DividendInfoViewModel(
         }
     }
 
+    private suspend fun fetchYahooDividends(stockCode: String): MarketDividendData {
+        val yahooDividends = dividendRepository.fetchLatestDividends(stockCode)
+        return MarketDividendData(
+            cashDividend = yahooDividends.cashDividend,
+            stockDividend = yahooDividends.stockDividend
+        )
+    }
+
+    private suspend fun fetchCnDividends(stockCode: String): MarketDividendData {
+        val summary = cnDividendRepository.fetchDividends(stockCode)
+        val cashRecord = latestCnCashDividendRecord(summary.records)
+        val stockRecord = latestCnStockDividendRecord(summary.records)
+        val latest = summary.latest
+        return MarketDividendData(
+            cashDividend = cashRecord?.cashDividendPerShare?.let { amount ->
+                (cashRecord.exDividendDate ?: cashRecord.reportDate)?.let { date ->
+                    DividendResult(amount, date)
+                }
+            },
+            stockDividend = stockRecord?.stockDividendPerShare?.let { amount ->
+                (stockRecord.exDividendDate ?: stockRecord.reportDate)?.let { date ->
+                    DividendResult(amount, date)
+                }
+            },
+            recordDate = (cashRecord ?: latest)?.recordDate,
+            planProgress = (cashRecord ?: latest)?.planProgress
+        )
+    }
+
     fun refresh() {
-        val stocks = latestTaiwanStocks
+        val stocks = latestDividendStocks
         val accountId = latestAccountId
         if (stocks.isEmpty()) return
 

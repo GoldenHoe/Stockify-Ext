@@ -50,6 +50,7 @@ import com.rsps1008.stockify.data.Stock
 import com.rsps1008.stockify.data.StockDao
 import com.rsps1008.stockify.data.StockDataFetcher
 import com.rsps1008.stockify.data.StockMarket
+import com.rsps1008.stockify.data.CnTradingRules
 import com.rsps1008.stockify.data.StockKey
 import com.rsps1008.stockify.data.canonicalStockCode
 import com.rsps1008.stockify.data.toStockKey
@@ -150,8 +151,8 @@ internal fun canonicalizeCsvTransaction(
     val stockCode = canonicalStockCode(csvTransaction.stockCode)
     val market = StockMarket.normalize(csvTransaction.market)
     if (validateMarket) {
-        require(market == StockMarket.inferFromCode(stockCode)) {
-            "市場 $market 與股號 $stockCode 推斷的 ${StockMarket.inferFromCode(stockCode)} 不一致"
+        require(StockMarket.isCodeConsistent(market, stockCode)) {
+            "市場 $market 與股號 $stockCode 不一致"
         }
     }
     return csvTransaction.copy(
@@ -272,6 +273,15 @@ class SettingsViewModel(
 
     val lastUsStockListUpdateTime: StateFlow<Long?> = settingsDataStore.lastUsStockListUpdateTimeFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    val lastCnStockListUpdateTime: StateFlow<Long?> = settingsDataStore.lastCnStockListUpdateTimeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    val cnCommissionRate: StateFlow<Double> = settingsDataStore.cnCommissionRateFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), CnTradingRules.DEFAULT_COMMISSION_RATE)
+
+    val cnMinimumCommission: StateFlow<Double> = settingsDataStore.cnMinimumCommissionFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), CnTradingRules.DEFAULT_MINIMUM_COMMISSION)
 
     val feeDiscount: StateFlow<Double> = settingsDataStore.feeDiscountFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0.28)
@@ -1819,6 +1829,14 @@ class SettingsViewModel(
                             )}；匯入被拒絕。"
                         )
                     }
+                com.rsps1008.stockify.data.CnTradingRules.validateT1Sells(accountTxs)
+                    ?.let { error ->
+                        throw CsvImportValidationException(
+                            "股票 $code、帳戶 $accountId 的$error；${describeCsvImportRows(
+                                importedForCode.filter { it.transaction.accountId == accountId }
+                            )}；匯入被拒絕。"
+                        )
+                    }
                 if (!com.rsps1008.stockify.data.MarginCalculationSupport.hasValidRepaymentBalances(accountTxs)) {
                     throw CsvImportValidationException(
                         "股票 $code、帳戶 $accountId 包含超過剩餘本金的融資還款；${describeCsvImportRows(
@@ -2066,6 +2084,18 @@ class SettingsViewModel(
         }
     }
 
+    fun setCnCommissionRate(rate: Double) {
+        viewModelScope.launch {
+            settingsDataStore.setCnCommissionRate(rate)
+        }
+    }
+
+    fun setCnMinimumCommission(amount: Double) {
+        viewModelScope.launch {
+            settingsDataStore.setCnMinimumCommission(amount)
+        }
+    }
+
     fun setDividendFee(fee: Int) {
         viewModelScope.launch {
             settingsDataStore.setDividendFee(fee)
@@ -2268,6 +2298,39 @@ class SettingsViewModel(
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to update US stock list from Nasdaq Trader", e)
                 _message.value = "美股列表更新失敗: ${e.message}"
+            } finally {
+                _updatingStockListMarket.value = null
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun updateStockListFromCn() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _updatingStockListMarket.value = StockMarket.CN
+            try {
+                val started = StockListSyncCoordinator.runIfNotRunning(StockMarket.CN) {
+                    val stocks = stockDataFetcher.fetchCnStockList()
+                    if (stocks.isEmpty()) {
+                        throw IllegalStateException("東方財富未回傳可用的A股資料")
+                    }
+                    val updatedStocks = stockListRepository.replaceStocksInDatabase(
+                        database = appDatabase,
+                        market = StockMarket.CN,
+                        stocks = stocks
+                    )
+                    settingsDataStore.setLastCnStockListUpdateTime(System.currentTimeMillis())
+                    _message.value = "A股股票列表更新成功！共 ${updatedStocks.size} 筆"
+                }
+                if (!started) {
+                    _message.value = "A股股票列表正在更新中，請稍後再試"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update CN stock list from Eastmoney", e)
+                _message.value = "A股列表更新失敗: ${e.message}"
             } finally {
                 _updatingStockListMarket.value = null
                 _isLoading.value = false

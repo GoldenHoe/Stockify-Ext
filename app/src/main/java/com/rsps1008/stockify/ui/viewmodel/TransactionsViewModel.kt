@@ -11,6 +11,7 @@ import com.rsps1008.stockify.data.TransactionListRepository
 import com.rsps1008.stockify.data.TransactionListSnapshot
 import com.rsps1008.stockify.ui.screens.TransactionUiState
 import com.rsps1008.stockify.ui.screens.transactionCashFlowAmount
+import com.rsps1008.stockify.ui.text.ChineseTextConverter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -92,7 +93,14 @@ private fun List<TransactionUiState>.cashFlowTotals(): List<TransactionDateCashF
         }
         .groupBy({ it.first }, { it.second })
         .entries
-        .sortedBy { (market, _) -> if (market == StockMarket.TW) 0 else 1 }
+        .sortedBy { (market, _) ->
+            when (market) {
+                StockMarket.TW -> 0
+                StockMarket.US -> 1
+                StockMarket.CN -> 2
+                else -> 3
+            }
+        }
         .map { (market, amounts) ->
             val expenses = amounts.filter { it < 0.0 }.sum()
             TransactionDateCashFlowTotal(
@@ -112,11 +120,10 @@ internal fun filterTransactionDateSections(
     return sections.mapNotNull { section ->
         val matches = section.transactions.filter { row ->
             terms.all { term ->
-                row.transaction.stockCode.contains(term, ignoreCase = true) ||
-                    row.stockName.contains(term, ignoreCase = true) ||
-                    row.transaction.type.contains(term, ignoreCase = true) ||
-                    row.transaction.note.contains(term, ignoreCase = true) ||
-                    section.date.contains(term, ignoreCase = true)
+                matchesTransactionRow(section, row, term) ||
+                    // Stored text stays Traditional, so a Simplified search term has
+                    // to be mapped back before it can match.
+                    matchesTransactionRow(section, row, ChineseTextConverter.toTraditional(term))
             }
         }
         if (matches.isEmpty()) {
@@ -128,6 +135,18 @@ internal fun filterTransactionDateSections(
             )
         }
     }
+}
+
+private fun matchesTransactionRow(
+    section: TransactionDateSection,
+    row: TransactionUiState,
+    term: String
+): Boolean {
+    return row.transaction.stockCode.contains(term, ignoreCase = true) ||
+        row.stockName.contains(term, ignoreCase = true) ||
+        row.transaction.type.contains(term, ignoreCase = true) ||
+        row.transaction.note.contains(term, ignoreCase = true) ||
+        section.date.contains(term, ignoreCase = true)
 }
 
 internal fun transactionListUiStates(

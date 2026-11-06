@@ -35,6 +35,8 @@ import com.rsps1008.stockify.data.TransactionCostSupport
 import com.rsps1008.stockify.data.Account
 import com.rsps1008.stockify.data.AccountFeeSettings
 import com.rsps1008.stockify.data.accountFeeSettings
+import com.rsps1008.stockify.data.CnTradingRules
+import com.rsps1008.stockify.data.CurrencyConversionSupport
 import com.rsps1008.stockify.ui.screens.HoldingsUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -80,13 +82,15 @@ private data class HomeSettingsBundle(
     val minFeeOddLot: Int,
     val returnRateMode: ReturnRateMode,
     val marginDayCount: Int,
-    val excludeDividendIncomeFromReturns: Boolean
+    val excludeDividendIncomeFromReturns: Boolean,
+    val cnFeeSettings: CnTradingRules.FeeSettings = CnTradingRules.FeeSettings()
 )
 
 private data class HomeHistoryCalculationBundle(
     val settings: HomeSettingsBundle,
     val displayMode: String,
-    val usdToTwdRate: Double
+    val usdToTwdRate: Double,
+    val cnyToTwdRate: Double
 )
 
 private data class HistoricalHoldingStats(
@@ -162,7 +166,9 @@ class HoldingsViewModel(
         .map { state ->
             state.holdings
                 .map { it.stock }
-                .filter { StockMarket.isTw(it.market) || StockMarket.isUs(it.market) }
+                .filter {
+                    StockMarket.isTw(it.market) || StockMarket.isUs(it.market) || StockMarket.isCn(it.market)
+                }
                 .distinctBy { StockMarket.normalize(it.market) to it.code }
                 .sortedWith(compareBy<Stock> { StockMarket.normalize(it.market) }.thenBy { it.code })
         }
@@ -383,6 +389,12 @@ class HoldingsViewModel(
         .combine(settingsDataStore.minFeeOddLotFlow) { settings, minFeeOddLot ->
             settings.copy(minFeeOddLot = minFeeOddLot)
         }
+        .combine(settingsDataStore.cnCommissionRateFlow) { settings, commissionRate ->
+            settings.copy(cnFeeSettings = settings.cnFeeSettings.copy(commissionRate = commissionRate))
+        }
+        .combine(settingsDataStore.cnMinimumCommissionFlow) { settings, minimumCommission ->
+            settings.copy(cnFeeSettings = settings.cnFeeSettings.copy(minimumCommission = minimumCommission))
+        }
         .combine(stockDao.getAllAccountsFlow()) { settings, accounts ->
             settings.copy(
                 feeSettingsByAccount = accountFeeSettings(
@@ -397,9 +409,10 @@ class HoldingsViewModel(
     private val historyCalculationBundle = combine(
         settingsCombined,
         homeDisplayMode,
-        exchangeRateService.usdToTwdRate
-    ) { settings, displayMode, usdToTwdRate ->
-        HomeHistoryCalculationBundle(settings, displayMode, usdToTwdRate)
+        exchangeRateService.usdToTwdRate,
+        exchangeRateService.cnyToTwdRate
+    ) { settings, displayMode, usdToTwdRate, cnyToTwdRate ->
+        HomeHistoryCalculationBundle(settings, displayMode, usdToTwdRate, cnyToTwdRate)
     }
 
     private val historyTransactions = settingsDataStore.activeAccountIdFlow
@@ -436,6 +449,7 @@ class HoldingsViewModel(
             val settings = calculationBundle.settings
             val normalizedMode = HomeDisplayMode.normalize(calculationBundle.displayMode)
             val normalizedUsdToTwdRate = calculationBundle.usdToTwdRate.takeIf { it > 0.0 } ?: 1.0
+            val normalizedCnyToTwdRate = calculationBundle.cnyToTwdRate.takeIf { it > 0.0 } ?: 1.0
             val allTxs = scopedTransactions.second
 
             val personalPoints = mutableListOf<PersonalHistoryPoint>()
@@ -502,13 +516,12 @@ class HoldingsViewModel(
             val historicalCashFlowTimelinesByStock = if (settings.returnRateMode == ReturnRateMode.XIRR) {
                 historicalTxsByStock.mapValues { (stockKey, transactions) ->
                     val stockMarket = marketByStockKey.getValue(stockKey)
-                    val currencyRate = if (
-                        normalizedMode == HomeDisplayMode.COMBINED && StockMarket.isUs(stockMarket)
-                    ) {
-                        normalizedUsdToTwdRate
-                    } else {
-                        1.0
-                    }
+                    val currencyRate = CurrencyConversionSupport.combinedRateToTwd(
+                        stockMarket,
+                        normalizedMode == HomeDisplayMode.COMBINED,
+                        normalizedUsdToTwdRate,
+                        normalizedCnyToTwdRate
+                    )
                     HistoricalTransactionCashFlowTimeline(
                         transactions = transactions,
                         currencyRate = currencyRate,
@@ -549,9 +562,14 @@ class HoldingsViewModel(
                     pt.date,
                     StockMarket.US
                 ) ?: continue
+                val cnDayEnd = HistoryChartCalculationSupport.valuationDateEndMillis(
+                    pt.date,
+                    StockMarket.CN
+                ) ?: continue
                 val dayEndByMarket = mapOf(
                     StockMarket.TW to twDayEnd,
-                    StockMarket.US to usDayEnd
+                    StockMarket.US to usDayEnd,
+                    StockMarket.CN to cnDayEnd
                 )
                 val transactionCutoff = TransactionDateSupport.replayCutoffMillis(pt.date)
                     ?: continue
@@ -611,16 +629,15 @@ class HoldingsViewModel(
                         shortSummary = shortSummary,
                         shortIncome = timeline.shortIncome,
                         shortCoverExpense = timeline.shortCoverExpense,
-                        hasMarginPurchase = timeline.hasMarginPurchase
+                        hasMarginPurchase = timeline.hasMarginPurchase,
+                        cnFeeSettings = settings.cnFeeSettings
                     )
-                    val currencyRate = if (
-                        normalizedMode == HomeDisplayMode.COMBINED &&
-                        StockMarket.isUs(stockMarket)
-                    ) {
-                        normalizedUsdToTwdRate
-                    } else {
-                        1.0
-                    }
+                    val currencyRate = CurrencyConversionSupport.combinedRateToTwd(
+                        stockMarket,
+                        normalizedMode == HomeDisplayMode.COMBINED,
+                        normalizedUsdToTwdRate,
+                        normalizedCnyToTwdRate
+                    )
                     totalMarketValue += stats.marketValue * currencyRate
                     totalInvestment += stats.totalInvestment * currencyRate
                     totalRemainingPositionInvestment += stats.remainingPositionInvestment * currencyRate
@@ -727,7 +744,8 @@ class HoldingsViewModel(
                 val mode = HomeDisplayMode.normalize(homeDisplayMode.first())
                 val message = when (mode) {
                     HomeDisplayMode.US -> "目前沒有美股持股，暫無歷史資料可顯示。"
-                    HomeDisplayMode.COMBINED -> "目前沒有台股或美股持股，暫無歷史資料可顯示。"
+                    HomeDisplayMode.CN -> "目前沒有A股持股，暫無歷史資料可顯示。"
+                    HomeDisplayMode.COMBINED -> "目前沒有台股、美股或A股持股，暫無歷史資料可顯示。"
                     else -> "目前沒有台股持股，暫無歷史資料可顯示。"
                 }
                 if (requestVersion == homeHistoryRequestVersion) {
@@ -774,10 +792,13 @@ class HoldingsViewModel(
                                     forceRefreshCurrentMonth = forceRefreshCurrentMonth
                                 ) { step, total ->
                                     if (!hasCompleteCachedPoints) {
-                                        val statusText = if (StockMarket.isUs(stock.market)) {
-                                            "正在載入 ${stock.name} (${index + 1}/$totalStocks) 美股歷史股價..."
-                                        } else {
-                                            "正在載入 ${stock.name} (${index + 1}/$totalStocks) 第 $step/$total 個月..."
+                                        val statusText = when {
+                                            StockMarket.isUs(stock.market) ->
+                                                "正在載入 ${stock.name} (${index + 1}/$totalStocks) 美股歷史股價..."
+                                            StockMarket.isCn(stock.market) ->
+                                                "正在載入 ${stock.name} (${index + 1}/$totalStocks) A股歷史股價..."
+                                            else ->
+                                                "正在載入 ${stock.name} (${index + 1}/$totalStocks) 第 $step/$total 個月..."
                                         }
                                         synchronized(progressStateLock) {
                                             val progress = progressTracker.update(index, step, total)
@@ -879,7 +900,8 @@ class HoldingsViewModel(
         shortSummary: ShortSellingSummary,
         shortIncome: Double,
         shortCoverExpense: Double,
-        hasMarginPurchase: Boolean
+        hasMarginPurchase: Boolean,
+        cnFeeSettings: CnTradingRules.FeeSettings = CnTradingRules.FeeSettings()
     ): HistoricalHoldingStats {
         val shares = replay.shares
         val totalBuyExpense = replay.totalBuyExpense
@@ -923,7 +945,9 @@ class HoldingsViewModel(
         totalPL -= marginSummary.totalInterestExpense
         totalPL += shortIncome - shortCoverExpense - shortSummary.outstandingShares * ptPrice - shortSummary.accruedBorrowFee - shortSummary.compensationExpense
 
-        if (preDeductSellFees && marketValue > 0.0 && StockMarket.isTw(market)) {
+        if (preDeductSellFees && marketValue > 0.0 && StockMarket.isCn(market)) {
+            totalPL -= CnTradingRules.exitCost(marketValue, cnFeeSettings)
+        } else if (preDeductSellFees && marketValue > 0.0 && StockMarket.isTw(market)) {
             val sellFee = estimateTaiwanSellFee(
                 transactions = transactions,
                 currentPrice = ptPrice,

@@ -14,6 +14,7 @@ import com.rsps1008.stockify.data.GoogleDriveAuthState
 import com.rsps1008.stockify.data.GoogleDriveAuthResolutionHelper
 import com.rsps1008.stockify.data.HoldingsOrderBackupService
 import com.rsps1008.stockify.data.AppDatabase
+import com.rsps1008.stockify.data.CnMarketIndexService
 import com.rsps1008.stockify.data.RealtimeStockDataService
 import com.rsps1008.stockify.data.SettingsDataStore
 import com.rsps1008.stockify.data.StockDataFetcher
@@ -24,6 +25,7 @@ import com.rsps1008.stockify.data.TaiwanWeightedIndexService
 import com.rsps1008.stockify.data.TransactionListRepository
 import com.rsps1008.stockify.data.UsdTwdExchangeRateService
 import com.rsps1008.stockify.data.TwseStockHistoryService
+import com.rsps1008.stockify.ui.text.DisplayLanguage
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -50,6 +52,7 @@ class StockifyApplication : Application() {
     lateinit var exchangeRateService: UsdTwdExchangeRateService
     lateinit var realtimeStockDataService: RealtimeStockDataService
     lateinit var taiwanWeightedIndexService: TaiwanWeightedIndexService
+    lateinit var cnMarketIndexService: CnMarketIndexService
     lateinit var twseStockHistoryService: TwseStockHistoryService
     lateinit var transactionListRepository: TransactionListRepository
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -322,17 +325,57 @@ class StockifyApplication : Application() {
         }
     }
 
+    /**
+     * Checks the China A-share list once when the app opens. The list is large,
+     * so a failure keeps the previously stored rows untouched.
+     */
+    suspend fun updateCnStockListIfDue() {
+        StockListSyncCoordinator.runIfNotRunning(StockMarket.CN) {
+            updateCnStockListIfDueInternal()
+        }
+    }
+
+    private suspend fun updateCnStockListIfDueInternal() {
+        val lastUpdatedAt = settingsDataStore.lastCnStockListUpdateTimeFlow.first()
+        if (lastUpdatedAt != null && System.currentTimeMillis() - lastUpdatedAt < STOCK_LIST_UPDATE_INTERVAL_MILLIS) {
+            return
+        }
+
+        try {
+            val stocks = StockDataFetcher(httpClient).fetchCnStockList()
+            if (stocks.isEmpty()) {
+                Log.w(TAG, "China stock list update returned no stocks")
+                return
+            }
+
+            val updatedStocks = StockListRepository(this).replaceStocksInDatabase(
+                database = database,
+                market = StockMarket.CN,
+                stocks = stocks
+            )
+            settingsDataStore.setLastCnStockListUpdateTime(System.currentTimeMillis())
+            Log.i(TAG, "Updated China stock list on app open: ${updatedStocks.size} stocks")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to update China stock list on app open", e)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
+        DisplayLanguage.updateFrom(this)
         PDFBoxResourceLoader.init(this)
         database = AppDatabase.getDatabase(this)
         settingsDataStore = SettingsDataStore(this)
         exchangeRateService = UsdTwdExchangeRateService(settingsDataStore)
         taiwanWeightedIndexService = TaiwanWeightedIndexService(httpClient, settingsDataStore)
+        cnMarketIndexService = CnMarketIndexService(httpClient, settingsDataStore)
         realtimeStockDataService = RealtimeStockDataService(
             stockDao = database.stockDao(),
             settingsDataStore = settingsDataStore,
             taiwanWeightedIndexService = taiwanWeightedIndexService,
+            cnMarketIndexService = cnMarketIndexService,
             applicationContext = this
         )
         twseStockHistoryService = TwseStockHistoryService(httpClient, database.stockDao())

@@ -26,3 +26,9 @@ app/src/main/assets/adi-registration.properties
 .kotlin
 
 Stockify-Web/
+
+# Local Gradle home used when the build must not touch %USERPROFILE%\.gradle
+/.gradle-home/
+
+# Screenshots captured while verifying UI on a device
+/shots/

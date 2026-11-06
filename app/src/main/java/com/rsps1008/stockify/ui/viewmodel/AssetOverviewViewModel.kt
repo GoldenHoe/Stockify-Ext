@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 data class AssetOverviewUiState(
     val taiwanStockValue: Double = 0.0,
     val usStockValue: Double = 0.0,
+    val cnStockValue: Double = 0.0,
     val stockValues: List<AssetStockValue> = emptyList(),
     val bankDeposits: List<BankDeposit> = emptyList(),
     val loans: List<Loan> = emptyList()
@@ -40,7 +41,7 @@ data class AssetOverviewUiState(
         get() = loans.sumOf { it.amount }
 
     val grossAssets: Double
-        get() = taiwanStockValue + usStockValue + totalBankDeposit
+        get() = taiwanStockValue + usStockValue + cnStockValue + totalBankDeposit
 
     val netAssets: Double
         get() = grossAssets - totalLoan
@@ -65,6 +66,7 @@ class AssetOverviewViewModel(
         AssetOverviewUiState(
             taiwanStockValue = holdings.taiwanMarketValue,
             usStockValue = holdings.usMarketValue,
+            cnStockValue = holdings.cnMarketValue,
             stockValues = holdings.assetStockValues,
             bankDeposits = bankData.bankDeposits,
             loans = bankData.loans

@@ -9,9 +9,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -20,7 +20,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -46,6 +45,9 @@ import com.rsps1008.stockify.ui.viewmodel.TransactionDetailState
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
 import com.rsps1008.stockify.data.formatMarketAmount
 import com.rsps1008.stockify.data.formatShareCount
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -72,7 +74,7 @@ fun TransactionDetailScreen(transactionId: Int, navController: NavController) {
                     onClick = {
                         viewModel.deleteTransaction { error ->
                             if (error != null) {
-                                Toast.makeText(application, error, Toast.LENGTH_LONG).show()
+                                Toast.makeText(application, error.localized(), Toast.LENGTH_LONG).show()
                             } else {
                                 navController.popBackStack()
                             }
@@ -93,25 +95,21 @@ fun TransactionDetailScreen(transactionId: Int, navController: NavController) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("明細") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+            StockifyTopBar(
+                title = "交易明細",
+                onBack = { navController.popBackStack() },
                 actions = {
                     IconButton(
                         onClick = { showDeleteDialog = true },
                         enabled = transactionDetailState is TransactionDetailState.Ready && canModifyTransaction
                     ) {
-                        Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                        Icon(Icons.Outlined.Delete, contentDescription = "刪除".localized())
                     }
                     IconButton(
                         onClick = { navController.navigate(Screen.AddTransaction.createRoute(transactionId)) },
                         enabled = transactionDetailState is TransactionDetailState.Ready && canModifyTransaction
                     ) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit")
+                        Icon(Icons.Outlined.Edit, contentDescription = "編輯".localized())
                     }
                 }
             )

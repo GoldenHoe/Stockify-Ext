@@ -26,9 +26,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -41,7 +41,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -73,6 +72,9 @@ import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
 import com.rsps1008.stockify.data.formatMarketAmount
 import com.rsps1008.stockify.data.formatShareCount
 import com.rsps1008.stockify.data.StockMarket
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -168,13 +170,10 @@ fun StockDetailScreen(stockCode: String, market: String? = null, navController: 
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(text = "${holdingInfo?.stock?.name} ${holdingInfo?.stock?.code}") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+            StockifyTopBar(
+                title = "${holdingInfo?.stock?.name.orEmpty()} ${holdingInfo?.stock?.code.orEmpty()}".trim()
+                    .ifBlank { "個股詳情" },
+                onBack = { navController.popBackStack() },
                 actions = {
                     // 新增交易
                     IconButton(onClick = {
@@ -182,12 +181,12 @@ fun StockDetailScreen(stockCode: String, market: String? = null, navController: 
                             Screen.AddTransaction.createRoute(null, stockCode, normalizedMarket)
                         )
                     }) {
-                        Icon(Icons.Default.Add, contentDescription = "Add transaction")
+                        Icon(Icons.Outlined.Add, contentDescription = "新增交易".localized())
                     }
 
                     // 刪除全部交易
                     IconButton(onClick = { viewModel.onDeleteTransactionsClicked() }) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete all transactions")
+                        Icon(Icons.Outlined.Delete, contentDescription = "刪除全部交易".localized())
                     }
                 }
             )
@@ -203,10 +202,16 @@ fun StockDetailScreen(stockCode: String, market: String? = null, navController: 
             holdingInfo?.let { info ->
                 StockDetailSummary(
                     holdingInfo = info,
-                    onYahooClick = {
-                        navController.navigate(
-                            Screen.YahooQuote.createRoute(info.stock.code, info.stock.market)
-                        )
+                    // The external quote page is Yahoo branded, so CN keeps its
+                    // own in-app experience instead of a mislabelled link.
+                    onYahooClick = if (com.rsps1008.stockify.data.StockMarket.isCn(info.stock.market)) {
+                        null
+                    } else {
+                        {
+                            navController.navigate(
+                                Screen.YahooQuote.createRoute(info.stock.code, info.stock.market)
+                            )
+                        }
                     }
                 )
             }
@@ -218,7 +223,10 @@ fun StockDetailScreen(stockCode: String, market: String? = null, navController: 
                     .weight(1f)
             ) {
                 holdingInfo?.let { info ->
-                    if (com.rsps1008.stockify.data.StockMarket.isTw(info.stock.market) || info.stock.market == com.rsps1008.stockify.data.StockMarket.US) {
+                    if (com.rsps1008.stockify.data.StockMarket.isTw(info.stock.market) ||
+                        com.rsps1008.stockify.data.StockMarket.isUs(info.stock.market) ||
+                        com.rsps1008.stockify.data.StockMarket.isCn(info.stock.market)
+                    ) {
                         item {
                             HistoryChartSection(viewModel = viewModel)
                         }
@@ -251,11 +259,15 @@ fun StockDetailScreen(stockCode: String, market: String? = null, navController: 
 @Composable
 private fun StockDetailSummary(
     holdingInfo: HoldingInfo,
-    onYahooClick: () -> Unit
+    onYahooClick: (() -> Unit)?
 ) {
     val totalPlColor = if (holdingInfo.totalPL >= 0) StockifyAppTheme.stockColors.gain else StockifyAppTheme.stockColors.loss
-    val positionDailyPL = holdingInfo.dailyChange * (holdingInfo.shares - holdingInfo.shortOutstandingShares)
-    val dailyPlColor = if (positionDailyPL >= 0) StockifyAppTheme.stockColors.gain else StockifyAppTheme.stockColors.loss
+    val positionDailyPL = holdingInfo.dailyPL
+    val dailyPlColor = when {
+        positionDailyPL > 0.0 -> StockifyAppTheme.stockColors.gain
+        positionDailyPL < 0.0 -> StockifyAppTheme.stockColors.loss
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -304,7 +316,11 @@ private fun StockDetailSummary(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = "持股日損益", style = MaterialTheme.typography.bodySmall)
                         AnimatedNumberText(
-                            text = formatMarketAmount(kotlin.math.abs(positionDailyPL), holdingInfo.stock.market),
+                            text = if (positionDailyPL > 0.0) {
+                                "+" + formatMarketAmount(positionDailyPL, holdingInfo.stock.market)
+                            } else {
+                                formatMarketAmount(positionDailyPL, holdingInfo.stock.market)
+                            },
                             color = dailyPlColor,
                             style = MaterialTheme.typography.bodyLarge
                         )
@@ -356,18 +372,20 @@ private fun StockDetailSummary(
                     }
                 }
             }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 10.dp, end = 10.dp)
-                    .size(24.dp)
-                    .clickable(onClick = onYahooClick),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_yahoo_brand),
-                    contentDescription = "Yahoo 股市"
-                )
+            onYahooClick?.let { openQuote ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 10.dp, end = 10.dp)
+                        .size(24.dp)
+                        .clickable(onClick = openQuote),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_yahoo_brand),
+                        contentDescription = "Yahoo 股市".localized()
+                    )
+                }
             }
         }
     }

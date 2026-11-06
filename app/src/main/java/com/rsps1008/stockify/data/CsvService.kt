@@ -75,7 +75,13 @@ class CsvService {
 
     private fun createCsvRecord(transaction: StockTransaction, stock: Stock): List<String> {
         val record = mutableMapOf<String, Any>()
-        val market = StockMarket.inferFromCode(stock.code)
+        // CN must stay explicit; TW/US keep being normalized from the code so a
+        // legacy mislabelled row is corrected on export.
+        val market = if (StockMarket.isCn(stock.market)) {
+            StockMarket.CN
+        } else {
+            StockMarket.inferFromCode(stock.code)
+        }
 
         val dateFormat = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
         val dateTimeFormat = SimpleDateFormat("yyyyMMdd HH:mm:ss.SSS", Locale.getDefault())
@@ -395,14 +401,14 @@ class CsvService {
         validateMarket: Boolean
     ): String {
         val rawValue = getOptionalValue(values, headerMap, "市場")
-        val inferredMarket = StockMarket.inferFromCode(stockCode)
-        if (rawValue.isBlank()) return inferredMarket
-        val parsedMarket = rawValue.trim().uppercase()
-            .takeIf { it == StockMarket.TW || it == StockMarket.US }
-            ?: throw IllegalArgumentException("市場必須是 TW 或 US")
+        if (rawValue.isBlank()) return StockMarket.inferFromCode(stockCode)
+        val parsedMarket = when (val normalized = rawValue.trim().uppercase()) {
+            StockMarket.TW, StockMarket.US, StockMarket.CN -> normalized
+            else -> throw IllegalArgumentException("市場必須是 TW、US 或 CN")
+        }
         if (validateMarket) {
-            require(parsedMarket == inferredMarket) {
-                "市場 $parsedMarket 與股號 $stockCode 推斷的 $inferredMarket 不一致"
+            require(StockMarket.isCodeConsistent(parsedMarket, stockCode)) {
+                "市場 $parsedMarket 與股號 $stockCode 不一致"
             }
         }
         return parsedMarket

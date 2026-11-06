@@ -10,14 +10,19 @@ import java.time.format.DateTimeFormatter
 object HistoryChartCalculationSupport {
     val taiwanZoneId: ZoneId = ZoneId.of("Asia/Taipei")
     val usZoneId: ZoneId = ZoneId.of("America/New_York")
+    val cnZoneId: ZoneId = ZoneId.of("Asia/Shanghai")
     val combinedXirrZoneId: ZoneId = ZoneOffset.UTC
 
-    fun zoneIdForMarket(market: String): ZoneId =
-        if (StockMarket.isUs(market)) usZoneId else taiwanZoneId
+    fun zoneIdForMarket(market: String): ZoneId = when {
+        StockMarket.isUs(market) -> usZoneId
+        StockMarket.isCn(market) -> cnZoneId
+        else -> taiwanZoneId
+    }
 
     fun zoneIdForHomeXirr(displayMode: String): ZoneId = when (HomeDisplayMode.normalize(displayMode)) {
         HomeDisplayMode.TW -> taiwanZoneId
         HomeDisplayMode.US -> usZoneId
+        HomeDisplayMode.CN -> cnZoneId
         else -> combinedXirrZoneId
     }
 
@@ -25,9 +30,12 @@ object HistoryChartCalculationSupport {
         val localDate = runCatching {
             LocalDate.parse(date, DateTimeFormatter.ISO_LOCAL_DATE)
         }.getOrNull() ?: return null
-        val isUsMarket = StockMarket.isUs(market)
         val zoneId = zoneIdForMarket(market)
-        val marketClose = if (isUsMarket) LocalTime.of(16, 0) else LocalTime.of(13, 30)
+        val marketClose = when {
+            StockMarket.isUs(market) -> LocalTime.of(16, 0)
+            StockMarket.isCn(market) -> LocalTime.of(15, 0)
+            else -> LocalTime.of(13, 30)
+        }
         return ZonedDateTime.of(localDate, marketClose, zoneId).toInstant().toEpochMilli()
     }
 

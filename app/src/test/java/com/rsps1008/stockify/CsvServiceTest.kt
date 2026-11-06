@@ -573,6 +573,57 @@ class CsvServiceTest {
         }
     }
 
+    @Test
+    fun `cn transactions keep the explicit market and cents through csv`() {
+        val service = CsvService()
+        val csv = ByteArrayOutputStream().also { output ->
+            service.export(
+                listOf(
+                    TransactionWithStock(
+                        transaction = StockTransaction(
+                            stockCode = "600000",
+                            market = StockMarket.CN,
+                            date = 0L,
+                            recordTime = 0L,
+                            type = "賣出",
+                            sellPrice = 10.05,
+                            sellShares = 100.0,
+                            fee = 5.1,
+                            tax = 0.5,
+                            income = 999.4
+                        ),
+                        stock = Stock(
+                            name = "浦發銀行",
+                            code = "600000",
+                            market = StockMarket.CN,
+                            exchange = com.rsps1008.stockify.data.StockExchange.SH
+                        )
+                    )
+                ),
+                output
+            )
+        }.toString(Charsets.UTF_8.name())
+
+        assertTrue(csv.contains(",CN,"))
+        val imported = service.import(csv.byteInputStream()).single()
+
+        assertEquals(StockMarket.CN, imported.market)
+        assertEquals(StockMarket.CN, imported.transaction.market)
+        assertEquals(5.1, imported.transaction.fee, 0.0)
+        assertEquals(0.5, imported.transaction.tax, 0.0)
+        // A 6 digit code alone infers TW, so the explicit CN column must win.
+        assertEquals(StockMarket.TW, StockMarket.inferFromCode("600000"))
+    }
+
+    @Test
+    fun `csv import rejects a market that contradicts the code shape`() {
+        val csv = editExportedRow(CsvService(), mapOf("市場" to "CN", "股號" to "AAPL"))
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            CsvService().import(csv.byteInputStream())
+        }
+        assertTrue(error.message.orEmpty().contains("不一致"))
+    }
+
     private fun exportSingleMarginTransaction(service: CsvService): String {
         return ByteArrayOutputStream().also { output ->
             service.export(

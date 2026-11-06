@@ -28,10 +28,15 @@ internal suspend fun refreshQuotesIncrementally(
     fetchBatch: suspend (List<Stock>) -> QuoteBatchOutcome,
     fetchSingle: suspend (Stock) -> QuoteFetchOutcome,
     fetchTaiwanFallback: suspend (Stock) -> QuoteFetchOutcome,
-    publish: suspend (Map<String, RealtimeStockInfo>) -> Unit
+    publish: suspend (Map<String, RealtimeStockInfo>) -> Unit,
+    fetchCnBatch: suspend (List<Stock>) -> QuoteBatchOutcome = { QuoteBatchOutcome(emptyMap()) },
+    fetchCnFallback: suspend (Stock) -> QuoteFetchOutcome = { QuoteFetchOutcome(null) }
 ): List<QuoteFetchResult> = coroutineScope {
     val permits = Semaphore(MAX_PARALLEL_STOCK_REQUESTS)
-    val (batchStocks, singleStocks) = stocks.distinctBy { it.toStockKey().cacheKey() }
+    val uniqueStocks = stocks.distinctBy { it.toStockKey().cacheKey() }
+    val cnStocks = uniqueStocks.filter { StockMarket.isCn(it.market) }
+    val (batchStocks, singleStocks) = uniqueStocks
+        .filterNot { StockMarket.isCn(it.market) }
         .partition { useTwseBatches && StockMarket.isTw(it.market) && !StockExchange.isEmerging(it.exchange) }
 
     suspend fun publishResult(stock: Stock, outcome: QuoteFetchOutcome): QuoteFetchResult {
@@ -40,9 +45,14 @@ internal suspend fun refreshQuotesIncrementally(
         return QuoteFetchResult(key, outcome)
     }
 
-    val batches = batchStocks.chunked(TWSE_QUOTE_BATCH_SIZE).map { batch ->
+    suspend fun runBatches(
+        group: List<Stock>,
+        batchSize: Int,
+        fetch: suspend (List<Stock>) -> QuoteBatchOutcome,
+        fallback: suspend (Stock) -> QuoteFetchOutcome
+    ): List<QuoteFetchResult> = group.chunked(batchSize).map { batch ->
         async {
-            val response = permits.withPermit { fetchBatch(batch) }
+            val response = permits.withPermit { fetch(batch) }
             val updates = batch.mapNotNull { stock ->
                 response.infos[stock.code]?.let { stock.toStockKey().cacheKey() to it }
             }.toMap()
@@ -54,18 +64,21 @@ internal suspend fun refreshQuotesIncrementally(
                     if (info != null) {
                         QuoteFetchResult(stock.toStockKey().cacheKey(), QuoteFetchOutcome(info))
                     } else {
-                        val fallback = permits.withPermit { fetchTaiwanFallback(stock) }
-                        publishResult(stock, fallback.copy(
+                        val fallbackOutcome = permits.withPermit { fallback(stock) }
+                        publishResult(stock, fallbackOutcome.copy(
                             fallbackUsed = true,
-                            certificateFailure = fallback.certificateFailure || response.certificateFailure
+                            certificateFailure = fallbackOutcome.certificateFailure || response.certificateFailure
                         ))
                     }
                 }
             }.awaitAll()
         }
-    }
+    }.awaitAll().flatten()
+
+    val twJob = async { runBatches(batchStocks, TWSE_QUOTE_BATCH_SIZE, fetchBatch, fetchTaiwanFallback) }
+    val cnJob = async { runBatches(cnStocks, CN_QUOTE_BATCH_SIZE, fetchCnBatch, fetchCnFallback) }
     val singles = singleStocks.map { stock ->
         async { publishResult(stock, permits.withPermit { fetchSingle(stock) }) }
     }
-    batches.awaitAll().flatten() + singles.awaitAll()
+    twJob.await() + cnJob.await() + singles.awaitAll()
 }

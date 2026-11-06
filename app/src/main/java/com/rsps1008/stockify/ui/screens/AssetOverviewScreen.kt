@@ -31,9 +31,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -42,7 +42,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -78,6 +77,9 @@ import com.rsps1008.stockify.data.Loan
 import com.rsps1008.stockify.ui.viewmodel.AssetOverviewUiState
 import com.rsps1008.stockify.ui.viewmodel.AssetOverviewViewModel
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import kotlin.math.atan2
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -146,7 +148,7 @@ fun AssetOverviewScreen(navController: NavController) {
     }
     LaunchedEffect(message) {
         message?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            Toast.makeText(context, it.localized(), Toast.LENGTH_LONG).show()
             viewModel.clearMessage()
         }
     }
@@ -159,25 +161,17 @@ fun AssetOverviewScreen(navController: NavController) {
     var deletingLoan by remember { mutableStateOf<Loan?>(null) }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp)
+        modifier = Modifier.fillMaxSize()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = { navController.popBackStack() }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-            }
-            Text("資產總覽", style = MaterialTheme.typography.titleLarge)
-        }
+        StockifyTopBar(
+            title = "資產總覽",
+            onBack = { navController.popBackStack() }
+        )
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 16.dp)
         ) {
@@ -649,7 +643,7 @@ private fun AssetLegendRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MaterialTheme.shapes.medium)
             .clickable(onClick = onClick)
             .background(slice.color.copy(alpha = if (isSelected) 0.18f else 0.08f))
             .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -726,10 +720,10 @@ private fun BankDepositSection(
                             )
                         }
                         IconButton(onClick = { onEdit(deposit) }, enabled = enabled) {
-                            Icon(Icons.Filled.Edit, contentDescription = "編輯 ${deposit.name}")
+                            Icon(Icons.Outlined.Edit, contentDescription = "編輯 ${deposit.name}".localized())
                         }
                         IconButton(onClick = { onDelete(deposit) }, enabled = enabled) {
-                            Icon(Icons.Filled.Delete, contentDescription = "刪除 ${deposit.name}")
+                            Icon(Icons.Outlined.Delete, contentDescription = "刪除 ${deposit.name}".localized())
                         }
                     }
                 }
@@ -857,10 +851,10 @@ private fun LoanSection(
                             )
                         }
                         IconButton(onClick = { onEdit(loan) }, enabled = enabled) {
-                            Icon(Icons.Filled.Edit, contentDescription = "編輯 ${loan.name}")
+                            Icon(Icons.Outlined.Edit, contentDescription = "編輯 ${loan.name}".localized())
                         }
                         IconButton(onClick = { onDelete(loan) }, enabled = enabled) {
-                            Icon(Icons.Filled.Delete, contentDescription = "刪除 ${loan.name}")
+                            Icon(Icons.Outlined.Delete, contentDescription = "刪除 ${loan.name}".localized())
                         }
                     }
                 }
@@ -959,7 +953,8 @@ private fun buildAssetSlices(
     val categoryColors = listOf(
         Color(0xFF4C78A8),
         Color(0xFFF58518),
-        Color(0xFF54A24B)
+        Color(0xFF54A24B),
+        Color(0xFFB279A2)
     )
     return when (chartMode) {
         AssetChartMode.CATEGORY -> buildList {
@@ -974,6 +969,12 @@ private fun buildAssetSlices(
                 "美股",
                 uiState.usStockValue.coerceAtLeast(0.0),
                 categoryColors[1]
+            )
+            val cn = AssetSlice(
+                "category_cn",
+                "A股",
+                uiState.cnStockValue.coerceAtLeast(0.0),
+                categoryColors[3]
             )
             val bank = AssetSlice(
                 "category_bank",
@@ -990,6 +991,7 @@ private fun buildAssetSlices(
             )
             if (taiwan.value > 0.0) add(taiwan)
             if (us.value > 0.0) add(us)
+            if (cn.value > 0.0) add(cn)
             if (bank.value > 0.0) add(bank)
             if (loan.value != 0.0) add(loan)
         }

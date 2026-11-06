@@ -6,7 +6,8 @@ import kotlinx.coroutines.sync.Mutex
 object StockListSyncCoordinator {
     private val marketLocks = mapOf(
         StockMarket.TW to Mutex(),
-        StockMarket.US to Mutex()
+        StockMarket.US to Mutex(),
+        StockMarket.CN to Mutex()
     )
 
     suspend fun runIfNotRunning(market: String, block: suspend () -> Unit): Boolean {

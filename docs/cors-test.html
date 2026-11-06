@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hans">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>韭菜記帳本（Stockify）CORS Test</title>
+  <title>韭菜记账本（Stockify）CORS Test</title>
   <style>
     :root {
       color-scheme: light;
@@ -189,61 +189,61 @@
 <body>
   <main class="wrap">
     <section class="hero">
-      <h1>韭菜記帳本（Stockify）CORS Test</h1>
+      <h1>韭菜记账本（Stockify）CORS Test</h1>
       <p class="lead">
-        這是一個最小測試頁，用瀏覽器直接 `fetch` 外部股票頁面或 API。
-        如果目標站台沒有開 CORS，結果會直接顯示被瀏覽器擋下。
+        这是一个最小测试页，用浏览器直接 `fetch` 外部股票页面或 API。
+        如果目标站台没有开 CORS，结果会直接显示被浏览器挡下。
       </p>
     </section>
 
     <section class="grid">
       <article class="card">
-        <h2>測試目標</h2>
-        <label for="urls">每行一個網址</label>
+        <h2>测试目标</h2>
+        <label for="urls">每行一个网址</label>
         <textarea id="urls">https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_2330.tw&json=1&delay=0
 https://tw.stock.yahoo.com/quote/2330
 https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&stockNo=2330&date=20260401</textarea>
         <div class="row">
-          <button class="primary" id="runBtn">開始測試</button>
-          <button class="secondary" id="clearBtn">清空結果</button>
+          <button class="primary" id="runBtn">开始测试</button>
+          <button class="secondary" id="clearBtn">清空结果</button>
         </div>
         <p class="hint">
-          建議用本機 HTTP 伺服器或 GitHub Pages 開啟，不要直接用 `file://`。
-          `file://` 會讓 origin 變得更混亂，不利於判斷到底是 CORS、CSP，還是檔案協定本身的限制。
+          建议用本机 HTTP 服务器或 GitHub Pages 打开，不要直接用 `file://`。
+          `file://` 会让 origin 变得更混乱，不利于判断到底是 CORS、CSP，还是文件协议本身的限制。
         </p>
       </article>
 
       <article class="card">
-        <h2>說明</h2>
+        <h2>说明</h2>
         <ul class="hint">
-          <li>這頁只做最原始的瀏覽器跨域檢查，不做任何代理或繞過。</li>
-          <li>如果是 CORS 問題，瀏覽器通常會回傳 `TypeError: Failed to fetch` 或類似錯誤。</li>
-          <li>如果可以抓到內容但不是 JSON，表示網頁可能允許跨域，但內容解析還要另外處理。</li>
-          <li>如果某個站只有伺服器端可抓、前端抓不到，之後就需要後端 proxy 或桌面原生層來做。</li>
+          <li>这页只做最原始的浏览器跨域检查，不做任何代理或绕过。</li>
+          <li>如果是 CORS 问题，浏览器通常会回传 `TypeError: Failed to fetch` 或类似错误。</li>
+          <li>如果可以抓到内容但不是 JSON，表示网页可能允许跨域，但内容解析还要另外处理。</li>
+          <li>如果某个站只有服务器端可抓、前端抓不到，之后就需要后端 proxy 或桌面原生层来做。</li>
         </ul>
       </article>
     </section>
 
     <section class="card">
-      <h2>結果</h2>
+      <h2>结果</h2>
       <table>
         <thead>
           <tr>
             <th style="width: 32%;">URL</th>
-            <th style="width: 12%;">狀態</th>
-            <th style="width: 16%;">耗時</th>
-            <th>回應 / 錯誤</th>
+            <th style="width: 12%;">状态</th>
+            <th style="width: 16%;">耗时</th>
+            <th>回应 / 错误</th>
           </tr>
         </thead>
         <tbody id="results">
           <tr>
-            <td colspan="4" class="hint">尚未測試。</td>
+            <td colspan="4" class="hint">尚未测试。</td>
           </tr>
         </tbody>
       </table>
     </section>
 
-    <p class="footer">如果你要，我也可以再做一版「純前端可部署的 韭菜記帳本（Stockify）跨域探測頁」。</p>
+    <p class="footer">如果你要，我也可以再做一版「纯前端可部署的 韭菜记账本（Stockify）跨域探测页」。</p>
   </main>
 
   <script>
@@ -254,7 +254,7 @@ https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&stockNo=2330&date
 
     function setResults(rows) {
       if (!rows.length) {
-        resultsEl.innerHTML = '<tr><td colspan="4" class="hint">尚未測試。</td></tr>';
+        resultsEl.innerHTML = '<tr><td colspan="4" class="hint">尚未测试。</td></tr>';
         return;
       }
 
@@ -343,14 +343,14 @@ https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&stockNo=2330&date
       }
 
       runBtn.disabled = true;
-      runBtn.textContent = '測試中...';
+      runBtn.textContent = '测试中...';
 
       setResults(urls.map(url => ({
         url,
         status: 'PENDING',
         statusClass: 'status-warn',
         elapsed: '-',
-        message: '等待回應...'
+        message: '等待回应...'
       })));
 
       const rows = [];
@@ -360,7 +360,7 @@ https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&stockNo=2330&date
       }
 
       runBtn.disabled = false;
-      runBtn.textContent = '開始測試';
+      runBtn.textContent = '开始测试';
     }
 
     runBtn.addEventListener('click', runTests);

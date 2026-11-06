@@ -15,12 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +39,8 @@ import com.rsps1008.stockify.data.HomeDisplayMode
 import com.rsps1008.stockify.data.PerformanceCalendarCalculationSupport
 import com.rsps1008.stockify.ui.theme.StockifyAppTheme
 import com.rsps1008.stockify.ui.viewmodel.PersonalHistoryPoint
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -85,7 +86,7 @@ fun PerformanceCalendarSection(
                 enabled = displayedMonth.minusMonths(1).toString() in availableMonths,
                 onClick = { onYearMonthSelected(displayedMonth.minusMonths(1).toString()) }
             ) {
-                Icon(Icons.Default.ChevronLeft, contentDescription = "上一個月")
+                Icon(Icons.Outlined.ChevronLeft, contentDescription = "上一個月".localized())
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -110,7 +111,7 @@ fun PerformanceCalendarSection(
                     displayedMonth.plusMonths(1).toString() in availableMonths,
                 onClick = { onYearMonthSelected(displayedMonth.plusMonths(1).toString()) }
             ) {
-                Icon(Icons.Default.ChevronRight, contentDescription = "下一個月")
+                Icon(Icons.Outlined.ChevronRight, contentDescription = "下一個月".localized())
             }
         }
 

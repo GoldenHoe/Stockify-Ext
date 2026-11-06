@@ -33,14 +33,15 @@ import com.rsps1008.stockify.ui.viewmodel.StockDetailViewModel
 import kotlin.math.roundToInt
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropUp
-import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.outlined.ArrowDropUp
+import androidx.compose.material.icons.outlined.ArrowDropDown
 
 import com.rsps1008.stockify.ui.viewmodel.HoldingsViewModel
 import com.rsps1008.stockify.data.HomeDisplayMode
 import com.rsps1008.stockify.data.StockMarket
 import com.rsps1008.stockify.data.formatHomeAmount
 import com.rsps1008.stockify.data.formatShareCount
+import com.rsps1008.stockify.ui.text.Text
 import java.util.Locale
 
 @Composable
@@ -51,10 +52,10 @@ fun HistoryChartSection(
     val historyState by viewModel.historyState.collectAsState()
     val isExpanded by viewModel.detailHistoryChartExpanded.collectAsState()
     val holdingInfo by viewModel.holdingInfo.collectAsState()
-    val displayMode = if (StockMarket.isUs(holdingInfo?.stock?.market)) {
-        HomeDisplayMode.US
-    } else {
-        HomeDisplayMode.TW
+    val displayMode = when {
+        StockMarket.isUs(holdingInfo?.stock?.market) -> HomeDisplayMode.US
+        StockMarket.isCn(holdingInfo?.stock?.market) -> HomeDisplayMode.CN
+        else -> HomeDisplayMode.TW
     }
     HistoryChartSectionContent(
         historyState = historyState,
@@ -177,7 +178,7 @@ fun HistoryChartSectionContent(
                     fontWeight = FontWeight.Bold
                 )
                 Icon(
-                    imageVector = if (isExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                    imageVector = if (isExpanded) Icons.Outlined.ArrowDropUp else Icons.Outlined.ArrowDropDown,
                     contentDescription = if (isExpanded) "Collapse" else "Expand",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -491,8 +492,16 @@ private fun HistoricalChartContent(
     val gainColor = StockifyAppTheme.stockColors.gain
     val lossColor = StockifyAppTheme.stockColors.loss
     val changeColor = if (displayPLPercentage >= 0) gainColor else lossColor
-    val currencyLabel = if (HomeDisplayMode.normalize(displayMode) == HomeDisplayMode.US) "US$" else "NT$"
-    val currencyName = if (HomeDisplayMode.normalize(displayMode) == HomeDisplayMode.US) "美元" else "台幣"
+    val currencyLabel = when (HomeDisplayMode.normalize(displayMode)) {
+        HomeDisplayMode.US -> "US$"
+        HomeDisplayMode.CN -> "CN¥"
+        else -> "NT$"
+    }
+    val currencyName = when (HomeDisplayMode.normalize(displayMode)) {
+        HomeDisplayMode.US -> "美元"
+        HomeDisplayMode.CN -> "人民幣"
+        else -> "台幣"
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // Row 1: Market Value & Shares
@@ -530,12 +539,14 @@ private fun HistoricalChartContent(
         Spacer(modifier = Modifier.height(6.dp))
 
         // Row 2: P/L & Date
+        // 左側損益可能很長（例如 -12.34% (CN¥ -1,234.56)），固定讓右側統計區間
+        // 保持單行，不因左側文字被壓縮換行。
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = if (isInteractive) "選股損益" else "累積損益",
                     style = MaterialTheme.typography.bodySmall,
@@ -559,7 +570,8 @@ private fun HistoricalChartContent(
                 Text(
                     text = if (isInteractive) "選取日期" else "統計區間",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
                 Text(
                     text = if (isInteractive) displayPoint.date.replace("-", "/")
@@ -569,7 +581,9 @@ private fun HistoricalChartContent(
                                "$firstYrMo ~ $lastYrMo"
                            },
                     style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }

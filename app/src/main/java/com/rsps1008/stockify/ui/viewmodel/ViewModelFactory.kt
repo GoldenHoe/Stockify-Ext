@@ -3,6 +3,7 @@ package com.rsps1008.stockify.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import com.rsps1008.stockify.data.CnStockSuggestService
 import com.rsps1008.stockify.data.AppDatabase
 import com.rsps1008.stockify.data.OfflineStockRepository
 import com.rsps1008.stockify.data.RealtimeStockDataService
@@ -11,6 +12,7 @@ import com.rsps1008.stockify.data.StockDao
 import com.rsps1008.stockify.data.StockMarket
 import com.rsps1008.stockify.data.TaiwanWeightedIndexService
 import com.rsps1008.stockify.data.UsdTwdExchangeRateService
+import com.rsps1008.stockify.data.dividend.CnDividendRepository
 import com.rsps1008.stockify.data.dividend.YahooDividendRepository
 import com.rsps1008.stockify.data.TwseStockHistoryService
 import com.rsps1008.stockify.data.TransactionListRepository
@@ -25,6 +27,8 @@ class ViewModelFactory(
     private val market: String? = null,
     private val transactionId: Int? = null,
     private val dividendRepository: YahooDividendRepository? = null,
+    private val cnDividendRepository: CnDividendRepository? = null,
+    private val cnStockSuggestService: CnStockSuggestService? = null,
     private val exchangeRateService: UsdTwdExchangeRateService? = null,
     private val taiwanWeightedIndexService: TaiwanWeightedIndexService? = null,
     private val twseStockHistoryService: TwseStockHistoryService? = null,
@@ -75,13 +79,17 @@ class ViewModelFactory(
                 requireNotNull(settingsDataStore) { "settingsDataStore is required for AddTransactionViewModel" }
                 requireNotNull(realtimeStockDataService) { "realtimeStockDataService is required for AddTransactionViewModel" }
                 requireNotNull(dividendRepository) { "dividendRepository is required for AddTransactionViewModel" }
+                requireNotNull(cnDividendRepository) { "cnDividendRepository is required for AddTransactionViewModel" }
+                requireNotNull(cnStockSuggestService) { "cnStockSuggestService is required for AddTransactionViewModel" }
                 @Suppress("UNCHECKED_CAST")
                 AddTransactionViewModel(
                     stockDao = stockDao,
                     settingsDataStore = settingsDataStore,
                     transactionId = transactionId,
                     realtimeStockDataService = realtimeStockDataService,
-                    dividendRepository = dividendRepository
+                    dividendRepository = dividendRepository,
+                    cnDividendRepository = cnDividendRepository,
+                    cnStockSuggestService = cnStockSuggestService
                 ) as T
             }
             modelClass.isAssignableFrom(TransactionsViewModel::class.java) -> {
@@ -126,6 +134,7 @@ class ViewModelFactory(
                 requireNotNull(settingsDataStore) { "settingsDataStore is required for DividendInfoViewModel" }
                 requireNotNull(exchangeRateService) { "exchangeRateService is required for DividendInfoViewModel" }
                 requireNotNull(transactionListRepository) { "transactionListRepository is required for DividendInfoViewModel" }
+                requireNotNull(cnDividendRepository) { "cnDividendRepository is required for DividendInfoViewModel" }
 
                 @Suppress("UNCHECKED_CAST")
                 DividendInfoViewModel(
@@ -137,6 +146,7 @@ class ViewModelFactory(
                     ),
                     transactionListRepository = transactionListRepository,
                     dividendRepository = dividendRepository,
+                    cnDividendRepository = cnDividendRepository,
                     settingsDataStore = settingsDataStore
                 ) as T
             }

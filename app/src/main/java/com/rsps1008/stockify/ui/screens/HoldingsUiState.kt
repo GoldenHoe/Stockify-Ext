@@ -11,6 +11,7 @@ data class HoldingsUiState(
     val marketValue: Double = 0.0,
     val taiwanMarketValue: Double = 0.0,
     val usMarketValue: Double = 0.0,
+    val cnMarketValue: Double = 0.0,
     val totalCost: Double = 0.0,
     val dividendIncome: Double = 0.0,
     val holdings: List<HoldingInfo> = emptyList(),
@@ -36,6 +37,8 @@ data class HoldingInfo(
     val totalPLPercentage: Double = 0.0,
     val dailyChange: Double = 0.0,
     val dailyChangePercentage: Double = 0.0,
+    /** 當日損益：當天買進的股數以買進成本計算，其餘股數以昨收計算。 */
+    val dailyPL: Double = 0.0,
     val dividendIncome: Double = 0.0,
     val marketValue: Double = 0.0,
     val limitState: LimitState = LimitState.NONE,

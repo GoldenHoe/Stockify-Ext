@@ -212,4 +212,73 @@ class StockDataFetcher(
             if (it.isEmpty()) throw IllegalStateException("Nasdaq Trader 未回傳可用的美股資料")
         }
     }
+
+    suspend fun fetchCnStockList(): List<Stock> = withContext(Dispatchers.IO) {
+        val stocksByCode = linkedMapOf<String, Stock>()
+        var total = 0
+        var page = 1
+        while (page <= CN_STOCK_LIST_MAX_PAGES) {
+            val url = CN_STOCK_LIST_URL_PREFIX + "&pn=$page" + CN_STOCK_LIST_URL_SUFFIX
+            val body = client.get(url) {
+                headers.append("User-Agent", CN_STOCK_LIST_USER_AGENT)
+                headers.append("Accept", "application/json, text/plain, */*")
+            }.bodyAsText()
+            val parsed = parseEastmoneyStockListPage(body)
+            if (parsed.stocks.isEmpty()) break
+            total = parsed.total
+            parsed.stocks.forEach { stock -> stocksByCode.putIfAbsent(stock.code, stock) }
+            if (stocksByCode.size >= total) break
+            page++
+        }
+        stocksByCode.values.toList().also {
+            if (it.isEmpty()) throw IllegalStateException("東方財富未回傳可用的A股資料")
+        }
+    }
+}
+
+private const val CN_STOCK_LIST_MAX_PAGES = 80
+private const val CN_STOCK_LIST_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+private const val CN_STOCK_LIST_URL_PREFIX =
+    "https://push2.eastmoney.com/api/qt/clist/get?pz=100&po=1&np=1&fltt=2&invt=2&fid=f3" +
+        "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+private const val CN_STOCK_LIST_URL_SUFFIX = "&fields=f12,f14,f13"
+
+internal data class CnStockListPage(
+    val total: Int = 0,
+    val stocks: List<Stock> = emptyList()
+)
+
+internal fun parseEastmoneyStockListPage(jsonText: String): CnStockListPage {
+    if (jsonText.isBlank()) return CnStockListPage()
+    val root = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(jsonText)
+    }.getOrNull() as? kotlinx.serialization.json.JsonObject ?: return CnStockListPage()
+    val data = root["data"] as? kotlinx.serialization.json.JsonObject ?: return CnStockListPage()
+    val total = (data["total"] as? kotlinx.serialization.json.JsonPrimitive)
+        ?.content?.toIntOrNull() ?: 0
+    val diff = data["diff"] as? kotlinx.serialization.json.JsonArray ?: return CnStockListPage(total)
+    val stocks = diff.mapNotNull { element ->
+        val row = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+        fun value(key: String): String? =
+            (row[key] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val code = value("f12")?.trim().orEmpty()
+        val name = value("f14")?.trim().orEmpty()
+        if (code.isEmpty() || name.isEmpty()) return@mapNotNull null
+        val marketFlag = value("f13")?.trim()?.toIntOrNull()
+        val exchange = when {
+            marketFlag == 1 -> StockExchange.SH
+            StockExchange.fromCnCode(code) != StockExchange.UNKNOWN -> StockExchange.fromCnCode(code)
+            else -> StockExchange.SZ
+        }
+        Stock(
+            name = name,
+            code = code,
+            market = StockMarket.CN,
+            exchange = exchange,
+            industry = "",
+            stockType = "股票"
+        )
+    }
+    return CnStockListPage(total = total, stocks = stocks)
 }

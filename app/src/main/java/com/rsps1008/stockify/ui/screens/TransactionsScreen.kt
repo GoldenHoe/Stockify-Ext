@@ -19,13 +19,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -51,7 +50,11 @@ import com.rsps1008.stockify.ui.viewmodel.TransactionsUiState
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
 import com.rsps1008.stockify.data.formatMarketAmount
 import com.rsps1008.stockify.data.formatShareCount
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import java.util.Locale
+import androidx.compose.ui.draw.clip
 
 @Composable
 fun TransactionsScreen(navController: NavController) {
@@ -83,15 +86,18 @@ internal fun TransactionsContent(
     onAddTransaction: () -> Unit,
     onTransactionClick: (Int) -> Unit
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
-        TransactionsBody(
-            uiState = uiState,
-            searchQuery = searchQuery,
-            onSearchQueryChange = onSearchQueryChange,
-            onAddTransaction = onAddTransaction,
-            onTransactionClick = onTransactionClick,
-            compactLayout = maxHeight < 400.dp
-        )
+    Column(modifier = Modifier.fillMaxSize()) {
+        StockifyTopBar(title = "交易紀錄")
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().imePadding()) {
+            TransactionsBody(
+                uiState = uiState,
+                searchQuery = searchQuery,
+                onSearchQueryChange = onSearchQueryChange,
+                onAddTransaction = onAddTransaction,
+                onTransactionClick = onTransactionClick,
+                compactLayout = maxHeight < 400.dp
+            )
+        }
     }
 }
 
@@ -106,36 +112,18 @@ private fun TransactionsBody(
 ) {
     val focusManager = LocalFocusManager.current
     Column(modifier = Modifier.fillMaxSize()) {
-        if (!compactLayout) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 16.dp),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                SampledResourceImage(
-                    resId = R.drawable.stockify,
-                    contentDescription = "Stockify Logo",
-                    modifier = Modifier.fillMaxWidth(0.35f).height(40.dp)
-                )
-            }
-        } else {
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchQueryChange,
             label = { Text("搜尋交易") },
             placeholder = { Text("代號、名稱、類型、筆記或日期") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { onSearchQueryChange("") }) {
-                        Icon(Icons.Default.Close, contentDescription = "清除搜尋")
+                        Icon(Icons.Outlined.Close, contentDescription = "清除搜尋".localized())
                     }
                 }
             },
@@ -203,6 +191,7 @@ private fun TransactionsBody(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.small)
                                     .background(MaterialTheme.colorScheme.surfaceVariant)
                                     .padding(horizontal = 8.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -238,7 +227,11 @@ private fun DailyCashFlowTotals(totals: List<TransactionDateCashFlowTotal>) {
 
     Column(horizontalAlignment = Alignment.End) {
         totals.forEach { total ->
-            val currencyPrefix = if (total.market == "US") "\$" else ""
+            val currencyPrefix = when (total.market) {
+                "US" -> "\$"
+                "CN" -> "¥"
+                else -> ""
+            }
             val summary = buildList {
                 if (total.income > 0.0) {
                     add("收入: $currencyPrefix${formatMarketAmount(total.income, total.market)}")

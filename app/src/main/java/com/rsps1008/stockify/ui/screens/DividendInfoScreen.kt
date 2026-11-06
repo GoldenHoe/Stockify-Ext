@@ -5,14 +5,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -22,6 +24,9 @@ import com.rsps1008.stockify.ui.navigation.Screen
 import com.rsps1008.stockify.ui.viewmodel.DividendInfoViewModel
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
 import com.rsps1008.stockify.ui.viewmodel.DividendItemUiState
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.components.StockifyTopBar
+import com.rsps1008.stockify.ui.text.localized
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,6 +38,7 @@ fun DividendInfoScreen(navController: NavController) {
             settingsDataStore = application.settingsDataStore,
             realtimeStockDataService = application.realtimeStockDataService,
             dividendRepository = YahooDividendRepository(application.httpClient),
+            cnDividendRepository = com.rsps1008.stockify.data.dividend.CnDividendRepository(application.httpClient),
             exchangeRateService = application.exchangeRateService,
             transactionListRepository = application.transactionListRepository
         )
@@ -42,16 +48,12 @@ fun DividendInfoScreen(navController: NavController) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("最新配息配股") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
+            StockifyTopBar(
+                title = "配息配股",
+                onBack = { navController.popBackStack() },
                 actions = {
                     IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                        Icon(Icons.Outlined.Refresh, contentDescription = "重新整理".localized())
                     }
                 }
             )
@@ -66,16 +68,30 @@ fun DividendInfoScreen(navController: NavController) {
         ) {
             items(
                 items = dividendList,
-                key = { item -> item.stockCode }
+                key = { item -> "${item.market}:${item.stockCode}" }
             ) { item ->
                 DividendInfoCard(
                     item = item,
-                    onClick = { navController.navigate(Screen.StockDetail.createRoute(item.stockCode, com.rsps1008.stockify.data.StockMarket.TW)) }
+                    onClick = {
+                        navController.navigate(
+                            Screen.StockDetail.createRoute(item.stockCode, item.market)
+                        )
+                    }
                 )
             }
         }
     }
 }
+
+/** A-share amounts come as per-share values with up to four decimals. */
+private val DividendItemUiState.isCnMarket: Boolean
+    get() = com.rsps1008.stockify.data.StockMarket.isCn(market)
+
+private fun formatDividendAmount(value: Double): String =
+    java.math.BigDecimal.valueOf(value)
+        .setScale(4, java.math.RoundingMode.HALF_UP)
+        .stripTrailingZeros()
+        .toPlainString()
 
 @Composable
 fun DividendInfoCard(item: DividendItemUiState, onClick: () -> Unit) {
@@ -85,7 +101,6 @@ fun DividendInfoCard(item: DividendItemUiState, onClick: () -> Unit) {
             .clickable(onClick = onClick)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Stock Name and Code
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -93,7 +108,10 @@ fun DividendInfoCard(item: DividendItemUiState, onClick: () -> Unit) {
             ) {
                 Text(
                     text = "${item.stockName} (${item.stockCode})",
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
                 if (item.isLoading) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -102,60 +120,99 @@ fun DividendInfoCard(item: DividendItemUiState, onClick: () -> Unit) {
 
             Spacer(modifier = Modifier.height(8.dp))
             HorizontalDivider()
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Cash Dividend
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("現金股利", style = MaterialTheme.typography.bodyMedium)
-                Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                    if (item.cashDividend != null) {
-                        Text("最新: ${item.cashDividend}", style = MaterialTheme.typography.bodyLarge)
-                        item.cashDividendDate?.let {
-                            Text("除息日: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else {
-                        Text("最新: -", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    
-                    if (item.lastLocalCashDividend != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("上次領取: ${item.lastLocalCashDividend}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                        Text("日期: ${item.lastLocalCashDividendDate}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    }
-                }
-            }
-            
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Stock Dividend
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("股票股利", style = MaterialTheme.typography.bodyMedium)
-                Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                    if (item.stockDividend != null) {
-                        Text("最新: ${item.stockDividend}", style = MaterialTheme.typography.bodyLarge)
-                        item.stockDividendDate?.let {
-                            Text("除權日: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else {
-                        Text("最新: -", style = MaterialTheme.typography.bodyMedium)
+            DividendDetailRow(
+                label = "現金股利",
+                value = item.cashDividend?.let { dividendPerShareText(item, it, "元") } ?: "無",
+                details = buildList {
+                    item.cashDividendDate?.let { add("除息日 $it") }
+                    if (item.isCnMarket) {
+                        item.recordDate?.let { add("股權登記日 $it") }
+                        item.planProgress?.takeIf { it.isNotBlank() }?.let { add("方案進度 $it") }
                     }
-
-                    if (item.lastLocalStockDividend != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("上次領取: ${item.lastLocalStockDividend}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                        Text("日期: ${item.lastLocalStockDividendDate}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    item.lastLocalCashDividend?.let { amount ->
+                        val date = item.lastLocalCashDividendDate
+                        add(if (date.isNullOrBlank()) "上次領取 $amount" else "上次領取 $amount（$date）")
                     }
                 }
-            }
-            
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 送股可能來自更早的方案（例如 2017 年），標示「最近一次」避免被誤讀成本次配股。
+            val stockPlanIsStale = item.stockDividendDate != null &&
+                item.cashDividendDate != null &&
+                item.stockDividendDate.take(4) < item.cashDividendDate.take(4)
+            DividendDetailRow(
+                label = "股票股利",
+                value = item.stockDividend
+                    ?.let { dividendPerShareText(item, it, "股") }
+                    ?.let { if (stockPlanIsStale) "最近一次 $it" else it }
+                    ?: "無",
+                details = buildList {
+                    item.stockDividendDate?.let { add("除權日 $it") }
+                    item.lastLocalStockDividend?.let { amount ->
+                        val date = item.lastLocalStockDividendDate
+                        add(if (date.isNullOrBlank()) "上次領取 $amount" else "上次領取 $amount（$date）")
+                    }
+                }
+            )
+
             if (item.errorMessage != null) {
-                 Spacer(modifier = Modifier.height(8.dp))
-                 Text(
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
                     text = "錯誤: ${item.errorMessage}",
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall
-                 )
+                )
             }
         }
     }
 }
+
+@Composable
+private fun DividendDetailRow(
+    label: String,
+    value: String,
+    details: List<String>
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(72.dp)
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            horizontalAlignment = Alignment.End
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+            details.forEach { detail ->
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/** A-share per-share values carry at most four decimals; keep them free of float noise. */
+private fun dividendPerShareText(item: DividendItemUiState, value: Double, unit: String): String =
+    if (item.isCnMarket) {
+        "每股 ${formatDividendAmount(value)} $unit"
+    } else {
+        formatDividendAmount(value)
+    }

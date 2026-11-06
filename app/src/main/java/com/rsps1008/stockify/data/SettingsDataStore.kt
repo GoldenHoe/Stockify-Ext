@@ -112,6 +112,7 @@ class SettingsDataStore private constructor(
     private val fetchIntervalKey = intPreferencesKey("refresh_interval")
     private val lastStockListUpdateTimeKey = longPreferencesKey("last_stock_list_update_time")
     private val lastUsStockListUpdateTimeKey = longPreferencesKey("last_us_stock_list_update_time")
+    private val lastCnStockListUpdateTimeKey = longPreferencesKey("last_cn_stock_list_update_time")
     private val feeDiscountKey = doublePreferencesKey("fee_discount")
     private val minFeeRegularKey = intPreferencesKey("min_fee_regular")
     private val minFeeOddLotKey = intPreferencesKey("min_fee_odd_lot")
@@ -135,7 +136,12 @@ class SettingsDataStore private constructor(
     private val skipPdfImportTutorialKey = booleanPreferencesKey("skip_pdf_import_tutorial")
     private val usdToTwdRateKey = doublePreferencesKey("usd_to_twd_rate")
     private val usdToTwdRateUpdatedAtKey = longPreferencesKey("usd_to_twd_rate_updated_at")
+    private val cnyToTwdRateKey = doublePreferencesKey("cny_to_twd_rate")
+    private val cnyToTwdRateUpdatedAtKey = longPreferencesKey("cny_to_twd_rate_updated_at")
+    private val cnCommissionRateKey = doublePreferencesKey("cn_commission_rate")
+    private val cnMinimumCommissionKey = doublePreferencesKey("cn_minimum_commission")
     private val taiwanWeightedIndexCacheKey = stringPreferencesKey("taiwan_weighted_index_cache")
+    private val cnMarketIndexCacheKey = stringPreferencesKey("cn_market_index_cache")
     private val dividendInfoCacheKey = stringPreferencesKey("dividend_info_cache")
     private val homeDisplayModeKey = stringPreferencesKey("home_display_mode")
     private val holdingsOrderKey = stringPreferencesKey("holdings_order")
@@ -211,6 +217,11 @@ class SettingsDataStore private constructor(
     val lastUsStockListUpdateTimeFlow: Flow<Long?> = dataStoreInstance.data
         .map { preferences ->
             preferences[lastUsStockListUpdateTimeKey]
+        }
+
+    val lastCnStockListUpdateTimeFlow: Flow<Long?> = dataStoreInstance.data
+        .map { preferences ->
+            preferences[lastCnStockListUpdateTimeKey]
         }
 
     val feeDiscountFlow: Flow<Double> = dataStoreInstance.data
@@ -339,10 +350,42 @@ class SettingsDataStore private constructor(
             preferences[usdToTwdRateUpdatedAtKey]
         }
 
+    /** CNY/TWD is cached like USD/TWD so the combined home mode never waits on a fresh quote. */
+    val cnyToTwdRateFlow: Flow<Double> = dataStoreInstance.data
+        .map { preferences ->
+            preferences[cnyToTwdRateKey] ?: DEFAULT_CNY_TO_TWD_RATE
+        }
+
+    val cnyToTwdRateUpdatedAtFlow: Flow<Long?> = dataStoreInstance.data
+        .map { preferences ->
+            preferences[cnyToTwdRateUpdatedAtKey]
+        }
+
+    val cnCommissionRateFlow: Flow<Double> = dataStoreInstance.data
+        .map { preferences ->
+            preferences[cnCommissionRateKey]
+                ?.takeIf { it.isFinite() && it >= 0.0 }
+                ?: CnTradingRules.DEFAULT_COMMISSION_RATE
+        }
+
+    val cnMinimumCommissionFlow: Flow<Double> = dataStoreInstance.data
+        .map { preferences ->
+            preferences[cnMinimumCommissionKey]
+                ?.takeIf { it.isFinite() && it >= 0.0 }
+                ?: CnTradingRules.DEFAULT_MINIMUM_COMMISSION
+        }
+
     val taiwanWeightedIndexCacheFlow: Flow<TaiwanWeightedIndexInfo?> = dataStoreInstance.data
         .map { preferences ->
             preferences[taiwanWeightedIndexCacheKey]
                 ?.let { JsonCacheDecodeSupport.decodeOrNull<TaiwanWeightedIndexInfo>(it) }
+        }
+
+    val cnMarketIndexCacheFlow: Flow<List<CnMarketIndexInfo>> = dataStoreInstance.data
+        .map { preferences ->
+            preferences[cnMarketIndexCacheKey]
+                ?.let { JsonCacheDecodeSupport.decodeOrNull<List<CnMarketIndexInfo>>(it) }
+                .orEmpty()
         }
 
     val dividendInfoCacheFlow: Flow<Map<String, DividendInfoCacheEntry>> = dataStoreInstance.data
@@ -364,7 +407,7 @@ class SettingsDataStore private constructor(
 
     val homeDisplayModeFlow: Flow<String> = dataStoreInstance.data
         .map { preferences ->
-            preferences[homeDisplayModeKey] ?: HomeDisplayMode.COMBINED
+            preferences[homeDisplayModeKey] ?: HomeDisplayMode.CN
         }
 
     val holdingsOrderFlow: Flow<List<String>> = dataStoreInstance.data
@@ -556,6 +599,12 @@ class SettingsDataStore private constructor(
         }
     }
 
+    suspend fun setLastCnStockListUpdateTime(time: Long) {
+        dataStoreInstance.edit {
+            it[lastCnStockListUpdateTimeKey] = time
+        }
+    }
+
     suspend fun setFeeDiscount(discount: Double) {
         dataStoreInstance.edit {
             it[feeDiscountKey] = discount
@@ -682,9 +731,34 @@ class SettingsDataStore private constructor(
         }
     }
 
+    suspend fun setCnyToTwdRate(rate: Double, updatedAt: Long = System.currentTimeMillis()) {
+        if (!rate.isFinite() || rate <= 0.0) return
+        dataStoreInstance.edit {
+            it[cnyToTwdRateKey] = rate
+            it[cnyToTwdRateUpdatedAtKey] = updatedAt
+        }
+    }
+
+    suspend fun setCnCommissionRate(rate: Double) {
+        if (!rate.isFinite() || rate < 0.0) return
+        dataStoreInstance.edit { it[cnCommissionRateKey] = rate }
+    }
+
+    suspend fun setCnMinimumCommission(amount: Double) {
+        if (!amount.isFinite() || amount < 0.0) return
+        dataStoreInstance.edit { it[cnMinimumCommissionKey] = amount }
+    }
+
     suspend fun setTaiwanWeightedIndexCache(info: TaiwanWeightedIndexInfo) {
         dataStoreInstance.edit {
             it[taiwanWeightedIndexCacheKey] = Json.encodeToString(info)
+        }
+    }
+
+    suspend fun setCnMarketIndexCache(indexes: List<CnMarketIndexInfo>) {
+        if (indexes.isEmpty()) return
+        dataStoreInstance.edit {
+            it[cnMarketIndexCacheKey] = Json.encodeToString(indexes)
         }
     }
 
@@ -1194,3 +1268,4 @@ class SettingsDataStore private constructor(
 
 internal const val DEFAULT_MARGIN_ANNUAL_RATE = 6.45
 internal const val DEFAULT_SHORT_BORROW_ANNUAL_RATE = 3.5
+internal const val DEFAULT_CNY_TO_TWD_RATE = 4.4

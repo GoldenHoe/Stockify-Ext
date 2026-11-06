@@ -95,6 +95,18 @@ abstract class AppDatabase : RoomDatabase() {
                         refreshBundledCache = null,
                         skipIfManuallyUpdated = false
                     )
+
+                    syncBundledStockList(
+                        context = context,
+                        database = database,
+                        stockDao = stockDao,
+                        market = StockMarket.CN,
+                        assetName = CN_STOCKS_ASSET_NAME,
+                        checksumFileName = CN_STOCKS_CHECKSUM_FILE_NAME,
+                        bundledStocksProvider = { twStockListRepository.readCnStocks() },
+                        refreshBundledCache = null,
+                        skipIfManuallyUpdated = false
+                    )
                 }
             }
         }
@@ -157,6 +169,7 @@ abstract class AppDatabase : RoomDatabase() {
         private const val US_STOCKS_ASSET_NAME = "us_stocks.json"
         private const val TW_STOCKS_CHECKSUM_FILE_NAME = "stocks.json.sha256"
         private const val US_STOCKS_CHECKSUM_FILE_NAME = "us_stocks.json.sha256"
+        private const val CN_STOCKS_CHECKSUM_FILE_NAME = "cn_stocks.json.sha256"
 
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {

@@ -14,7 +14,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.rsps1008.stockify.data.APP_LOCK_MAX_PIN_LENGTH
 import com.rsps1008.stockify.data.isValidAppLockPin
 import com.rsps1008.stockify.ui.viewmodel.SettingsViewModel
+import com.rsps1008.stockify.ui.text.Text
 
 @Composable
 internal fun AppLockSettingsSection(

@@ -22,7 +22,8 @@ object CalculationRoundingMode {
     }
 
     fun applyCurrency(value: Double, market: String?, mode: String): Double {
-        return if (StockMarket.isUs(market)) {
+        // CN fees and taxes are quoted in cents, so keep two decimals like US.
+        return if (usesFractionalCurrency(market)) {
             when (normalize(mode)) {
                 FLOOR -> floor(value * 100) / 100.0
                 else -> (value * 100).roundToInt() / 100.0

@@ -14,15 +14,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.rsps1008.stockify.data.APP_LOCK_MAX_PIN_LENGTH
 import com.rsps1008.stockify.data.SettingsDataStore
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
 import kotlinx.coroutines.launch
 
 @Composable
@@ -87,10 +88,10 @@ fun AppLockScreen(
     }
     val promptInfo = remember {
         BiometricPrompt.PromptInfo.Builder()
-            .setTitle("解鎖韭菜記帳本")
-            .setSubtitle("使用指紋或生物辨識解鎖")
+            .setTitle("解鎖韭菜記帳本".localized())
+            .setSubtitle("使用指紋或生物辨識解鎖".localized())
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .setNegativeButtonText("改用數字密碼")
+            .setNegativeButtonText("改用數字密碼".localized())
             .build()
     }
 
@@ -116,7 +117,7 @@ fun AppLockScreen(
             verticalArrangement = Arrangement.Center
         ) {
             Icon(
-                imageVector = Icons.Filled.Lock,
+                imageVector = Icons.Outlined.Lock,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary
             )
@@ -172,7 +173,7 @@ fun AppLockScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = SettingsButtonShape
                 ) {
-                    Icon(Icons.Filled.Fingerprint, contentDescription = null)
+                    Icon(Icons.Outlined.Fingerprint, contentDescription = null)
                     Text("  使用指紋／生物辨識")
                 }
             }

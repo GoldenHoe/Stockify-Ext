@@ -17,14 +17,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBalance
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Wallet
-import androidx.compose.material.icons.filled.Percent
+import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Wallet
+import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ButtonDefaults
@@ -36,7 +36,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -52,6 +51,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rsps1008.stockify.data.Account
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,7 +79,7 @@ fun AccountSwitcherBadge(
 
     Surface(
         onClick = { showSheet = true },
-        shape = RoundedCornerShape(8.dp),
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         modifier = modifier
@@ -90,11 +91,11 @@ fun AccountSwitcherBadge(
         ) {
             Icon(
                 imageVector = if (activeAccountId == 0) {
-                    Icons.Default.AccountBalance
+                    Icons.Outlined.AccountBalance
                 } else {
-                    Icons.Default.Wallet
+                    Icons.Outlined.Wallet
                 },
-                contentDescription = "切換帳戶",
+                contentDescription = "切換帳戶".localized(),
                 modifier = Modifier.size(14.dp),
                 tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
@@ -107,7 +108,7 @@ fun AccountSwitcherBadge(
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             Icon(
-                imageVector = Icons.Default.ArrowDropDown,
+                imageVector = Icons.Outlined.ArrowDropDown,
                 contentDescription = null,
                 modifier = Modifier.size(14.dp),
                 tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
@@ -179,15 +180,15 @@ fun AccountSwitcherSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(44.dp)
                 ) {
                     Icon(
                         imageVector = if (activeAccountId == 0) {
-                            Icons.Default.AccountBalance
+                            Icons.Outlined.AccountBalance
                         } else {
-                            Icons.Default.Wallet
+                            Icons.Outlined.Wallet
                         },
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -260,12 +261,12 @@ fun AccountSwitcherSheet(
             OutlinedButton(
                 onClick = { showAddDialog = true },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = MaterialTheme.shapes.medium,
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.primary
                 )
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("新增帳戶")
             }
@@ -464,7 +465,7 @@ fun AccountItemRow(
     Surface(
         onClick = onSelect,
         enabled = !isManageMode,
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.medium,
         color = if (isSelected) selectedColor else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
         contentColor = if (isSelected) selectedContentColor else MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(
@@ -484,7 +485,7 @@ fun AccountItemRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = MaterialTheme.shapes.small,
                 color = if (isSelected) {
                     MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                 } else {
@@ -493,7 +494,7 @@ fun AccountItemRow(
                 modifier = Modifier.size(38.dp)
             ) {
                 Icon(
-                    imageVector = if (isSystemAccount) Icons.Default.AccountBalance else Icons.Default.Wallet,
+                    imageVector = if (isSystemAccount) Icons.Outlined.AccountBalance else Icons.Outlined.Wallet,
                     contentDescription = null,
                     tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(9.dp)
@@ -522,16 +523,16 @@ fun AccountItemRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onEditFeeDiscount, modifier = Modifier.size(36.dp)) {
                         Icon(
-                            imageVector = Icons.Default.Percent,
-                            contentDescription = "設定帳戶手續費",
+                            imageVector = Icons.Outlined.Percent,
+                            contentDescription = "設定帳戶手續費".localized(),
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(19.dp)
                         )
                     }
                     IconButton(onClick = onRename, modifier = Modifier.size(36.dp)) {
                         Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "重新命名",
+                            imageVector = Icons.Outlined.Edit,
+                            contentDescription = "重新命名".localized(),
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(19.dp)
                         )
@@ -539,8 +540,8 @@ fun AccountItemRow(
                     if (!isSystemAccount) {
                         IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
                             Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "刪除帳戶",
+                                imageVector = Icons.Outlined.Delete,
+                                contentDescription = "刪除帳戶".localized(),
                                 tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(19.dp)
                             )
@@ -549,8 +550,8 @@ fun AccountItemRow(
                 }
             } else if (isSelected) {
                 Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "目前帳戶",
+                    imageVector = Icons.Outlined.Check,
+                    contentDescription = "目前帳戶".localized(),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp)
                 )

@@ -26,6 +26,8 @@ class UsdTwdExchangeRateService(
         private const val REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000L
     }
 
+    private data class ExchangeRates(val usdToTwd: Double?, val cnyToTwd: Double?)
+
     private val client = HttpClient(CIO) {
         engine {
             requestTimeout = 5000
@@ -38,9 +40,15 @@ class UsdTwdExchangeRateService(
     private val _usdToTwdRate = MutableStateFlow(32.0)
     val usdToTwdRate: StateFlow<Double> = _usdToTwdRate.asStateFlow()
 
+    private val _cnyToTwdRate = MutableStateFlow(DEFAULT_CNY_TO_TWD_RATE)
+    val cnyToTwdRate: StateFlow<Double> = _cnyToTwdRate.asStateFlow()
+
     init {
         scope.launch {
             _usdToTwdRate.value = settingsDataStore.usdToTwdRateFlow.first()
+        }
+        scope.launch {
+            _cnyToTwdRate.value = settingsDataStore.cnyToTwdRateFlow.first()
         }
         startRefreshing()
     }
@@ -57,23 +65,35 @@ class UsdTwdExchangeRateService(
     }
 
     suspend fun refreshOnce() {
-        val rate = fetchRate()
-        val validRate = rate.takeIf { it.isFinitePositive() }
-        if (validRate != null) {
-            _usdToTwdRate.value = validRate
-            settingsDataStore.setUsdToTwdRate(validRate)
+        val rates = fetchRates()
+        val validUsd = rates.usdToTwd?.takeIf { it.isFinitePositive() }
+        if (validUsd != null) {
+            _usdToTwdRate.value = validUsd
+            settingsDataStore.setUsdToTwdRate(validUsd)
+        }
+        val validCny = rates.cnyToTwd?.takeIf { it.isFinitePositive() }
+        if (validCny != null) {
+            _cnyToTwdRate.value = validCny
+            settingsDataStore.setCnyToTwdRate(validCny)
         }
     }
 
-    private suspend fun fetchRate(): Double? {
+    private suspend fun fetchRates(): ExchangeRates {
         return try {
             val jsonText = client.get("https://open.er-api.com/v6/latest/USD").bodyAsText()
             val root = Json.parseToJsonElement(jsonText).jsonObject
-            if (root["result"]?.jsonPrimitive?.content != "success") return null
-            root["rates"]?.jsonObject?.get("TWD")?.jsonPrimitive?.doubleOrNull
+            if (root["result"]?.jsonPrimitive?.content != "success") {
+                return ExchangeRates(null, null)
+            }
+            val rates = root["rates"]?.jsonObject
+            val twd = rates?.get("TWD")?.jsonPrimitive?.doubleOrNull
+            val cny = rates?.get("CNY")?.jsonPrimitive?.doubleOrNull
+            // The API is USD based, so CNY/TWD is TWD per CNY.
+            val cnyToTwd = if (twd != null && cny != null && cny > 0.0) twd / cny else null
+            ExchangeRates(twd, cnyToTwd)
         } catch (e: Exception) {
-            Log.e("UsdTwdExchangeRateService", "Failed to fetch USD/TWD rate: ${e.message}", e)
-            null
+            Log.e("UsdTwdExchangeRateService", "Failed to fetch exchange rates: ${e.message}", e)
+            ExchangeRates(null, null)
         }
     }
 }

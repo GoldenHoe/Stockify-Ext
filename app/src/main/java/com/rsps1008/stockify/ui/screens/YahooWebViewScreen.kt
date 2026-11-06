@@ -8,12 +8,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -26,6 +25,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavController
 import com.rsps1008.stockify.data.StockMarket
+import com.rsps1008.stockify.data.StockExchange
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,13 +53,9 @@ fun YahooWebViewScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(text = "Yahoo 股市") },
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            StockifyTopBar(
+                title = "Yahoo 行情",
+                onBack = { navController.popBackStack() }
             )
         }
     ) { paddingValues ->
@@ -88,7 +86,16 @@ fun YahooWebViewScreen(
 }
 
 private fun buildYahooQuoteUrl(stockCode: String, market: String): String {
-    val quoteSymbol = when (StockMarket.normalize(market)) {
+    val normalizedMarket = StockMarket.normalize(market)
+    if (normalizedMarket == StockMarket.CN) {
+        val prefix = when (StockExchange.fromCnCode(stockCode)) {
+            StockExchange.SH -> "sh"
+            StockExchange.BJ -> "bj"
+            else -> "sz"
+        }
+        return "https://quote.eastmoney.com/${prefix}${stockCode.trim()}.html"
+    }
+    val quoteSymbol = when (normalizedMarket) {
         StockMarket.TW -> if (stockCode.endsWith(".TW", ignoreCase = true)) stockCode else "$stockCode.TW"
         else -> stockCode
     }

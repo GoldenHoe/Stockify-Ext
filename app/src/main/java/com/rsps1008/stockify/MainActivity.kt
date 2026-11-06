@@ -6,10 +6,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -20,22 +20,20 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.BottomAppBar
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.PieChart
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.TooltipAnchorPosition
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,9 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavDestination
 import androidx.lifecycle.ViewModel
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
@@ -69,7 +68,10 @@ import com.rsps1008.stockify.ui.screens.AppLockScreen
 import com.rsps1008.stockify.ui.screens.UPDATE_HIGHLIGHTS_VERSION
 import com.rsps1008.stockify.ui.screens.UpdateHighlightsDialog
 import com.rsps1008.stockify.ui.screens.shouldShowUpdateHighlights
+import com.rsps1008.stockify.ui.text.DisplayLanguage
 import com.rsps1008.stockify.ui.theme.StockifyTheme
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -79,11 +81,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        DisplayLanguage.updateFrom(this)
         val stockifyApplication = application as StockifyApplication
         val dataStore = stockifyApplication.settingsDataStore
         lifecycleScope.launch {
             launch { stockifyApplication.updateTaiwanStockListIfDue() }
             launch { stockifyApplication.updateUsStockListIfDue() }
+            launch { stockifyApplication.updateCnStockListIfDue() }
         }
         lifecycleScope.launch {
             dataStore.themeFlow.collect { theme ->
@@ -190,109 +194,52 @@ fun MainScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (!isAddTransactionScreen) {
-                BottomAppBar(
-                    actions = {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceAround
-                        ) {
-                            NavigationTooltip("查看持股總覽") {
-                                IconButton(onClick = {
-                                    navigateToTopLevel(navController, Screen.Holdings.route)
-                                }) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_nav_holdings),
-                                        contentDescription = "持股總覽",
-                                        modifier = Modifier.size(30.dp),
-                                        tint = if (currentDestination?.hierarchy?.any { it.route == Screen.Holdings.route } == true) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        }
-                                    )
-                                }
-                            }
-                            NavigationTooltip("查看交易紀錄") {
-                                IconButton(onClick = {
-                                    navigateToTopLevel(navController, Screen.Transactions.route)
-                                }) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_nav_transactions),
-                                        contentDescription = "交易紀錄",
-                                        modifier = Modifier.size(30.dp),
-                                        tint = if (currentDestination?.hierarchy?.any { it.route == Screen.Transactions.route } == true) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        }
-                                    )
-                                }
-                            }
-                            NavigationTooltip("新增一筆交易") {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    shadowElevation = 3.dp,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .size(50.dp)
-                                        .clickable {
-                                            val currentEntry = navController.currentBackStackEntry
-                                            val stockCode = if (currentEntry?.destination?.route == Screen.StockDetail.route) {
-                                                currentEntry.arguments?.getString("stockCode")
-                                            } else {
-                                                null
-                                            }
-                                            val market = if (currentEntry?.destination?.route == Screen.StockDetail.route) {
-                                                currentEntry.arguments?.getString("market")
-                                            } else {
-                                                null
-                                            }
-                                            navController.navigate(Screen.AddTransaction.createRoute(stockCode = stockCode, market = market)) {
-                                                launchSingleTop = true
-                                            }
-                                        }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Filled.Add, contentDescription = "新增交易")
-                                    }
-                                }
-                            }
-                            NavigationTooltip("匯入、匯出與備份資料") {
-                                IconButton(onClick = {
-                                    navigateToTopLevel(navController, Screen.DataManagement.route)
-                                }) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_nav_data_management),
-                                        contentDescription = "資料管理",
-                                        modifier = Modifier.size(30.dp),
-                                        tint = if (currentDestination?.hierarchy?.any { it.route == Screen.DataManagement.route } == true) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        }
-                                    )
-                                }
-                            }
-                            NavigationTooltip("調整 App 設定") {
-                                IconButton(onClick = {
-                                    navigateToTopLevel(navController, Screen.Settings.route)
-                                }) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_nav_settings),
-                                        contentDescription = "設定",
-                                        modifier = Modifier.size(30.dp),
-                                        tint = if (currentDestination?.hierarchy?.any { it.route == Screen.Settings.route } == true) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        }
-                                    )
-                                }
-                            }
-
-                        }
-                    }
-                )
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 0.dp
+                ) {
+                    AppNavigationItem(
+                        selected = currentDestination.isOn(Screen.Holdings.route),
+                        label = "持股",
+                        icon = Icons.Outlined.PieChart,
+                        onClick = { navigateToTopLevel(navController, Screen.Holdings.route) }
+                    )
+                    AppNavigationItem(
+                        selected = currentDestination.isOn(Screen.Transactions.route),
+                        label = "交易",
+                        icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                        onClick = { navigateToTopLevel(navController, Screen.Transactions.route) }
+                    )
+                    AppNavigationItem(
+                        selected = currentDestination.isOn(Screen.DataManagement.route),
+                        label = "数据",
+                        icon = Icons.Outlined.CloudSync,
+                        onClick = { navigateToTopLevel(navController, Screen.DataManagement.route) }
+                    )
+                    AppNavigationItem(
+                        selected = currentDestination.isOn(Screen.Settings.route),
+                        label = "设置",
+                        icon = Icons.Outlined.Settings,
+                        onClick = { navigateToTopLevel(navController, Screen.Settings.route) }
+                    )
+                }
+            }
+        },
+        floatingActionButton = {
+            // Contextual FAB: the quick "add transaction" action belongs to the two
+            // data screens; showing it on Settings/Data management only covered content.
+            val showAddFab = !isAddTransactionScreen &&
+                (currentDestination.isOn(Screen.Holdings.route) ||
+                    currentDestination.isOn(Screen.Transactions.route))
+            if (showAddFab) {
+                FloatingActionButton(
+                    onClick = { navigateToAddTransaction(navController) },
+                    shape = MaterialTheme.shapes.large,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = "新增交易".localized())
+                }
             }
         }
     ) { innerPadding ->
@@ -320,19 +267,42 @@ fun MainScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NavigationTooltip(
-    message: String,
-    content: @Composable () -> Unit
+private fun RowScope.AppNavigationItem(
+    selected: Boolean,
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit
 ) {
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = { PlainTooltip { Text(message) } },
-        state = rememberTooltipState(),
-        hasAction = false,
-        content = content
+    NavigationBarItem(
+        selected = selected,
+        onClick = onClick,
+        icon = {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp)
+            )
+        },
+        label = {
+            Text(text = label, maxLines = 1, softWrap = false)
+        }
     )
+}
+
+private fun NavDestination?.isOn(route: String): Boolean =
+    this?.hierarchy?.any { it.route == route } == true
+
+private fun navigateToAddTransaction(navController: androidx.navigation.NavHostController) {
+    val currentEntry = navController.currentBackStackEntry
+    val onDetail = currentEntry?.destination?.route == Screen.StockDetail.route
+    val stockCode = if (onDetail) currentEntry?.arguments?.getString("stockCode") else null
+    val market = if (onDetail) currentEntry?.arguments?.getString("market") else null
+    navController.navigate(
+        Screen.AddTransaction.createRoute(stockCode = stockCode, market = market)
+    ) {
+        launchSingleTop = true
+    }
 }
 
 private fun navigateToTopLevel(

@@ -16,7 +16,8 @@ internal data class HoldingCalculationInputs(
     val currentDateMillis: Long,
     val marginDayCount: Int,
     val includeProfitLossBreakdown: Boolean = false,
-    val excludeDividendIncomeFromReturns: Boolean = false
+    val excludeDividendIncomeFromReturns: Boolean = false,
+    val cnFeeSettings: CnTradingRules.FeeSettings = CnTradingRules.FeeSettings()
 )
 
 /** One entry per stock, owned by a single flow collector. Unchanged stocks need no ledger replay. */

@@ -31,9 +31,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -78,11 +78,14 @@ import com.rsps1008.stockify.data.RealtimeStockInfo
 import com.rsps1008.stockify.ui.theme.StockGain
 import com.rsps1008.stockify.ui.theme.StockLoss
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.PieChart
+import androidx.compose.material.icons.outlined.Savings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -103,6 +106,11 @@ import java.util.Locale
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import com.rsps1008.stockify.data.Account
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyBrandTopBar
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.PaddingValues
 
 
 @OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -137,6 +145,7 @@ fun HoldingsScreen(navController: NavController) {
     var showUnrealizedHoldings by rememberSaveable { mutableStateOf(true) }
     var showRealizedHoldings by rememberSaveable { mutableStateOf(true) }
     val usdToTwdRate by application.exchangeRateService.usdToTwdRate.collectAsState()
+    val cnyToTwdRate by application.exchangeRateService.cnyToTwdRate.collectAsState()
     val activeAccountId by viewModel.activeAccountId.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
     val sharedFeeDiscount by viewModel.sharedFeeDiscount.collectAsState()
@@ -145,18 +154,18 @@ fun HoldingsScreen(navController: NavController) {
 
     LaunchedEffect(viewModel) {
         viewModel.accountOperationError.collect { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, message.localized(), Toast.LENGTH_SHORT).show()
         }
     }
     val holdingSections = buildHoldingSections(uiState.holdings, partialSalesAsRealized)
     val activeHoldings = holdingSections.unrealized
     var orderedActiveHoldings by remember { mutableStateOf(emptyList<HoldingInfo>()) }
     val unrealizedCount = activeHoldings.size
-    val unrealizedPL = sumDisplayPL(activeHoldings, homeDisplayMode, usdToTwdRate)
+    val unrealizedPL = sumDisplayPL(activeHoldings, homeDisplayMode, usdToTwdRate, cnyToTwdRate)
     val zeroHoldings = holdingSections.realized
     var orderedZeroHoldings by remember { mutableStateOf(emptyList<HoldingInfo>()) }
     val clearedCount = zeroHoldings.size
-    val realizedPL = sumDisplayPL(zeroHoldings, homeDisplayMode, usdToTwdRate)
+    val realizedPL = sumDisplayPL(zeroHoldings, homeDisplayMode, usdToTwdRate, cnyToTwdRate)
 
     // ★ 從 application 的 realtimeStockDataService 取得即時股價 Map
     val realtimeMap by application.realtimeStockDataService.realtimeStockInfo.collectAsState()
@@ -181,28 +190,33 @@ fun HoldingsScreen(navController: NavController) {
         true
     }
     val normalizedUsdToTwdRate = usdToTwdRate.takeIf { it > 0.0 } ?: 1.0
+    val normalizedCnyToTwdRate = cnyToTwdRate.takeIf { it > 0.0 } ?: 1.0
     val displayedActiveHoldings = remember(
         orderedActiveHoldings,
         selectedSortColumn,
         isSortAscending,
-        normalizedUsdToTwdRate
+        normalizedUsdToTwdRate,
+        normalizedCnyToTwdRate
     ) {
         orderedActiveHoldings.applySort(
             column = selectedSortColumn,
             ascending = isSortAscending,
-            usdToTwdRate = normalizedUsdToTwdRate
+            usdToTwdRate = normalizedUsdToTwdRate,
+            cnyToTwdRate = normalizedCnyToTwdRate
         )
     }
     val displayedZeroHoldings = remember(
         orderedZeroHoldings,
         selectedSortColumn,
         isSortAscending,
-        normalizedUsdToTwdRate
+        normalizedUsdToTwdRate,
+        normalizedCnyToTwdRate
     ) {
         orderedZeroHoldings.applySort(
             column = selectedSortColumn,
             ascending = isSortAscending,
-            usdToTwdRate = normalizedUsdToTwdRate
+            usdToTwdRate = normalizedUsdToTwdRate,
+            cnyToTwdRate = normalizedCnyToTwdRate
         )
     }
 
@@ -260,40 +274,26 @@ fun HoldingsScreen(navController: NavController) {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(top = 16.dp),
-            contentAlignment = Alignment.TopCenter
-        ) {
-            SampledResourceImage(
-                resId = R.drawable.stockify,
-                contentDescription = "Stockify Logo",
-                modifier = Modifier.fillMaxWidth(0.35f)
-            )
-
-            IconButton(
-                onClick = { navController.navigate(Screen.AssetOverview.route) },
-                modifier = Modifier.align(Alignment.TopStart)
-            ) {
-                AssetOverviewIcon()
-            }
-
-            val context = LocalContext.current
-            IconButton(
-                onClick = {
-                    navController.navigate(Screen.DividendInfo.route) {
-                        launchSingleTop = true
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .pointerInput(Unit) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        StockifyBrandTopBar(
+            title = "持股總覽",
+            navigationIcon = {
+                IconButton(onClick = { navController.navigate(Screen.AssetOverview.route) }) {
+                    AssetOverviewIcon()
+                }
+            },
+            actions = {
+                val context = LocalContext.current
+                IconButton(
+                    onClick = {
+                        navController.navigate(Screen.DividendInfo.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                    modifier = Modifier.pointerInput(Unit) {
                         detectTapGestures(
                             onLongPress = {
-                                Toast.makeText(context, "查詢持股最新配息配股資訊", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "查詢持股最新配息配股資訊".localized(), Toast.LENGTH_SHORT).show()
                             },
                             onTap = {
                                 navController.navigate(Screen.DividendInfo.route) {
@@ -302,22 +302,23 @@ fun HoldingsScreen(navController: NavController) {
                             }
                         )
                     }
-            ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_dividend_info),
-                    contentDescription = "股利股息"
-                )
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Savings,
+                        contentDescription = "股利股息".localized()
+                    )
+                }
             }
-        }
+        )
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // ★ LazyColumn 會在圖片下方滑動
+        // ★ LazyColumn 會在 TopAppBar 下方滑動
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            state = lazyListState
+            state = lazyListState,
+            // 讓最後一筆持倉可以捲到 FAB 之上，不被懸浮按鈕遮住。
+            contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             item {
                 // ★ 改成傳時間字串，不再把 viewModel 丟進去
@@ -341,11 +342,27 @@ fun HoldingsScreen(navController: NavController) {
                 )
             }
 
+            item {
+                HomeMarketModeChips(
+                    currentMode = homeDisplayMode,
+                    onModeSelected = viewModel::setHomeDisplayMode,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                )
+            }
+
             if (showTaiwanWeightedIndex) {
-                item {
-                    TaiwanWeightedIndexSection(
-                        indexInfo = taiwanWeightedIndexInfo
-                    )
+                val indexMode = HomeDisplayMode.normalize(homeDisplayMode)
+                if (indexMode == HomeDisplayMode.TW || indexMode == HomeDisplayMode.COMBINED) {
+                    item {
+                        TaiwanWeightedIndexSection(
+                            indexInfo = taiwanWeightedIndexInfo
+                        )
+                    }
+                }
+                if (indexMode == HomeDisplayMode.CN || indexMode == HomeDisplayMode.COMBINED) {
+                    item {
+                        CnMarketIndexStrip()
+                    }
                 }
             }
 
@@ -485,8 +502,8 @@ private fun AssetOverviewIcon() {
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            painter = painterResource(id = R.drawable.ic_asset_chart_pie),
-            contentDescription = "資產總覽",
+            imageVector = Icons.Outlined.PieChart,
+            contentDescription = "資產總覽".localized(),
             modifier = Modifier.fillMaxSize(),
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -499,9 +516,9 @@ private fun AssetOverviewIcon() {
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_asset_dollar_sign),
+                    imageVector = Icons.Outlined.Payments,
                     contentDescription = null,
-                    modifier = Modifier.size(width = 8.dp, height = 12.dp),
+                    modifier = Modifier.size(10.dp),
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
@@ -569,12 +586,17 @@ private fun HoldingInfo.asRealizedSliceOrNull(): HoldingInfo? {
 private fun sumDisplayPL(
     holdings: List<HoldingInfo>,
     homeDisplayMode: String,
-    usdToTwdRate: Double
+    usdToTwdRate: Double,
+    cnyToTwdRate: Double
 ): Double {
     val mode = HomeDisplayMode.normalize(homeDisplayMode)
     return holdings.sumOf { holding ->
-        val rate = if (mode == HomeDisplayMode.COMBINED && StockMarket.isUs(holding.stock.market)) {
-            usdToTwdRate
+        val rate = if (mode == HomeDisplayMode.COMBINED) {
+            com.rsps1008.stockify.data.CurrencyConversionSupport.rateToTwd(
+                holding.stock.market,
+                usdToTwdRate,
+                cnyToTwdRate
+            )
         } else {
             1.0
         }
@@ -697,7 +719,8 @@ private fun normalizeHomeHoldingsSortMode(mode: String?): String =
 private fun List<HoldingInfo>.applySort(
     column: HoldingsSortColumn,
     ascending: Boolean,
-    usdToTwdRate: Double
+    usdToTwdRate: Double,
+    cnyToTwdRate: Double
 ): List<HoldingInfo> {
     if (column == HoldingsSortColumn.NONE) return this
 
@@ -714,29 +737,29 @@ private fun List<HoldingInfo>.applySort(
             { it.stock.code }
         )
         HoldingsSortColumn.PRICE -> compareBy<HoldingInfo>(
-            { it.currentPrice.toSortableAmount(it.stock.market, usdToTwdRate) },
+            { it.currentPrice.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
             { it.stock.market },
             { it.stock.code }
         )
         HoldingsSortColumn.AVERAGE_COST -> compareBy<HoldingInfo>(
-            { it.averageCost.toSortableAmount(it.stock.market, usdToTwdRate) },
-            { it.buyAverage.toSortableAmount(it.stock.market, usdToTwdRate) },
+            { it.averageCost.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
+            { it.buyAverage.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
             { it.stock.market },
             { it.stock.code }
         )
         HoldingsSortColumn.SELL_AVERAGE -> compareBy<HoldingInfo>(
-            { it.sellAverage.toSortableAmount(it.stock.market, usdToTwdRate) },
-            { it.buyAverage.toSortableAmount(it.stock.market, usdToTwdRate) },
+            { it.sellAverage.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
+            { it.buyAverage.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
             { it.stock.market },
             { it.stock.code }
         )
         HoldingsSortColumn.BUY_AVERAGE -> compareBy<HoldingInfo>(
-            { it.buyAverage.toSortableAmount(it.stock.market, usdToTwdRate) },
+            { it.buyAverage.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
             { it.stock.market },
             { it.stock.code }
         )
         HoldingsSortColumn.TOTAL_PL -> compareBy<HoldingInfo>(
-            { it.totalPL.toSortableAmount(it.stock.market, usdToTwdRate) },
+            { it.totalPL.toSortableAmount(it.stock.market, usdToTwdRate, cnyToTwdRate) },
             { it.stock.market },
             { it.stock.code }
         )
@@ -752,8 +775,13 @@ private fun List<HoldingInfo>.applySort(
 
 private fun Double.toSortableAmount(
     market: String,
-    usdToTwdRate: Double
-): Double = if (market == StockMarket.US) this * usdToTwdRate else this
+    usdToTwdRate: Double,
+    cnyToTwdRate: Double
+): Double = this * com.rsps1008.stockify.data.CurrencyConversionSupport.rateToTwd(
+    market,
+    usdToTwdRate,
+    cnyToTwdRate
+)
 
 @Composable
 private fun HoldingsListHeaderSticky(
@@ -787,7 +815,7 @@ private fun HoldingsListHeaderSticky(
             onSortClick = onSortClick
         )
         DualSortableHeaderText(
-            primaryText = "成本均",
+            primaryText = "成本",
             primaryColumn = HoldingsSortColumn.AVERAGE_COST,
             secondaryText = "買均",
             secondaryColumn = HoldingsSortColumn.BUY_AVERAGE,
@@ -885,10 +913,12 @@ private fun SingleSortableHeaderText(
         SortableHeaderLabel(
             text = text,
             column = column,
-            selectedSortColumn = selectedSortColumn,
-            isSortAscending = isSortAscending,
             textAlign = textAlign,
             onSortClick = onSortClick
+        )
+        SortIndicatorSlot(
+            selected = selectedSortColumn == column,
+            isSortAscending = isSortAscending
         )
     }
 }
@@ -913,19 +943,23 @@ private fun DualSortableHeaderText(
         SortableHeaderLabel(
             text = primaryText,
             column = primaryColumn,
-            selectedSortColumn = selectedSortColumn,
-            isSortAscending = isSortAscending,
             textAlign = textAlign,
             onSortClick = onSortClick
         )
-        Text("/", style = MaterialTheme.typography.bodySmall)
+        Text(
+            text = "/",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         SortableHeaderLabel(
             text = secondaryText,
             column = secondaryColumn,
-            selectedSortColumn = selectedSortColumn,
-            isSortAscending = isSortAscending,
             textAlign = textAlign,
             onSortClick = onSortClick
+        )
+        SortIndicatorSlot(
+            selected = selectedSortColumn == primaryColumn || selectedSortColumn == secondaryColumn,
+            isSortAscending = isSortAscending
         )
     }
 }
@@ -934,30 +968,39 @@ private fun DualSortableHeaderText(
 private fun SortableHeaderLabel(
     text: String,
     column: HoldingsSortColumn,
-    selectedSortColumn: HoldingsSortColumn,
-    isSortAscending: Boolean,
     textAlign: TextAlign,
     onSortClick: (HoldingsSortColumn) -> Unit
 ) {
-    val isSelected = selectedSortColumn == column
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        textAlign = textAlign,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clickable { onSortClick(column) }
+            .padding(vertical = 4.dp)
+    )
+}
 
-    Row(
-        modifier = Modifier.clickable { onSortClick(column) },
-        verticalAlignment = Alignment.CenterVertically
+/// Fixed-width slot so switching the sorted column never changes the header width,
+/// which previously pushed neighbouring labels into a second line.
+@Composable
+private fun SortIndicatorSlot(
+    selected: Boolean,
+    isSortAscending: Boolean
+) {
+    Box(
+        modifier = Modifier.size(14.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = textAlign
-        )
-
-        if (isSelected) {
+        if (selected) {
             Icon(
-                imageVector = if (isSortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
-                contentDescription = if (isSortAscending) "Ascending sort" else "Descending sort",
-                modifier = Modifier
-                    .padding(start = 1.dp)
-                    .height(12.dp),
+                imageVector = if (isSortAscending) Icons.Outlined.ArrowUpward else Icons.Outlined.ArrowDownward,
+                contentDescription = if (isSortAscending) "遞增排序" else "遞減排序",
+                modifier = Modifier.size(12.dp),
                 tint = MaterialTheme.colorScheme.primary
             )
         }
@@ -985,8 +1028,11 @@ fun SummarySection(
 ) {
     var showMarketValue by remember { mutableStateOf(true) }
 
-    val dailyPlColor =
-        if (uiState.dailyPL >= 0) StockifyAppTheme.stockColors.gain else StockifyAppTheme.stockColors.loss
+    val dailyPlColor = when {
+        uiState.dailyPL > 0.0 -> StockifyAppTheme.stockColors.gain
+        uiState.dailyPL < 0.0 -> StockifyAppTheme.stockColors.loss
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
 
     val cumulativePlColor =
         if (uiState.cumulativePL >= 0) StockifyAppTheme.stockColors.gain else StockifyAppTheme.stockColors.loss
@@ -1027,8 +1073,8 @@ fun SummarySection(
                                     strokeWidth = 1.5.dp
                                 )
                             } else Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = "更新報價",
+                                imageVector = Icons.Outlined.Refresh,
+                                contentDescription = "更新報價".localized(),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.height(10.dp)
                             )
@@ -1082,7 +1128,7 @@ fun SummarySection(
                     Column(modifier = Modifier.weight(3f)) {
                         Text("持股日損益", style = MaterialTheme.typography.bodySmall)
                         Text(
-                            formatHomeAmount(kotlin.math.abs(uiState.dailyPL), currentMode),
+                            formatSignedHomeAmount(uiState.dailyPL, currentMode),
                             style = MaterialTheme.typography.bodyLarge,
                             color = dailyPlColor
                         )
@@ -1127,19 +1173,6 @@ fun SummarySection(
                         Text(
                             formatHomeAmount(uiState.dividendIncome, currentMode),
                             style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        contentAlignment = Alignment.CenterEnd
-                    ) {
-                        HomeModeCyclePill(
-                            currentMode = currentMode,
-                            onModeSelected = onModeSelected,
-                            modifier = Modifier.offset(y = 4.dp)
                         )
                     }
                 }
@@ -1288,7 +1321,7 @@ fun HoldingCard(
                             onLongPress = {
                                 if (!hasShownSortingModeLongPressHintThisProcess) {
                                     hasShownSortingModeLongPressHintThisProcess = true
-                                    Toast.makeText(context, longPressDisabledMessage, Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, longPressDisabledMessage.localized(), Toast.LENGTH_SHORT).show()
                                 }
                             },
                             onTap = {
@@ -1461,7 +1494,7 @@ fun ZeroHoldingCard(
                             onLongPress = {
                                 if (!hasShownSortingModeLongPressHintThisProcess) {
                                     hasShownSortingModeLongPressHintThisProcess = true
-                                    Toast.makeText(context, longPressDisabledMessage, Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, longPressDisabledMessage.localized(), Toast.LENGTH_SHORT).show()
                                 }
                             },
                             onTap = {
@@ -1637,6 +1670,7 @@ fun HoldingsHeader(
                 indication = null,
                 onClick = onToggleExpanded
             )
+            .clip(MaterialTheme.shapes.small)
             .background(
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
             )
@@ -1674,7 +1708,7 @@ fun HoldingsHeader(
             color = plColor
         )
         Icon(
-            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
             contentDescription = if (expanded) "收起未實現區塊" else "展開未實現區塊",
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1705,6 +1739,7 @@ fun ClearedHoldingsHeader
                 indication = null,
                 onClick = onToggleExpanded
             )
+            .clip(MaterialTheme.shapes.small)
             .background(
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
             )
@@ -1743,7 +1778,7 @@ fun ClearedHoldingsHeader
             color = plColor
         )
         Icon(
-            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
             contentDescription = if (expanded) "收起已實現區塊" else "展開已實現區塊",
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1751,49 +1786,38 @@ fun ClearedHoldingsHeader
 }
 
 @Composable
-fun HomeModeCyclePill(
+fun HomeMarketModeChips(
     currentMode: String,
     onModeSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val selectedMode = HomeDisplayMode.normalize(currentMode)
+    // Three market chips; the legacy COMBINED mode keeps working for stored
+    // preferences but has no chip of its own.
+    val options = listOf(
+        HomeDisplayMode.TW to "台股",
+        HomeDisplayMode.US to "美股",
+        HomeDisplayMode.CN to "A股"
+    )
 
-    androidx.compose.material3.Surface(
-        modifier = modifier,
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        onClick = {
-            val nextMode = when (selectedMode) {
-                HomeDisplayMode.TW -> HomeDisplayMode.US
-                HomeDisplayMode.US -> HomeDisplayMode.COMBINED
-                else -> HomeDisplayMode.TW
-            }
-            onModeSelected(nextMode)
-        }
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            val twSelected = selectedMode == HomeDisplayMode.TW || selectedMode == HomeDisplayMode.COMBINED
-            val usSelected = selectedMode == HomeDisplayMode.US || selectedMode == HomeDisplayMode.COMBINED
-
-            Text(
-                text = "TW",
-                fontSize = 10.sp,
-                lineHeight = 10.sp,
-                fontWeight = if (twSelected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (twSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = "US",
-                fontSize = 10.sp,
-                lineHeight = 10.sp,
-                fontWeight = if (usSelected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (usSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+        options.forEach { (mode, label) ->
+            FilterChip(
+                selected = selectedMode == mode || selectedMode == HomeDisplayMode.COMBINED,
+                onClick = { onModeSelected(mode) },
+                label = {
+                    Text(
+                        text = label,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                },
+                modifier = Modifier.weight(1f)
             )
         }
     }
@@ -1809,3 +1833,12 @@ fun limitBackgroundColor(limitState: LimitState) =
         LimitState.NONE ->
             StockLoss.copy(alpha = 0f)
     }
+
+private fun formatSignedHomeAmount(value: Double, displayMode: String): String {
+    val formatted = formatHomeAmount(kotlin.math.abs(value), displayMode)
+    return when {
+        value > 0.0 -> "+$formatted"
+        value < 0.0 -> "-$formatted"
+        else -> formatted
+    }
+}

@@ -3,12 +3,14 @@ package com.rsps1008.stockify.data
 object HomeDisplayMode {
     const val TW = "TW"
     const val US = "US"
+    const val CN = "CN"
     const val COMBINED = "COMBINED"
 
     fun normalize(value: String?): String {
         return when (value?.trim()?.uppercase()) {
             TW -> TW
             US -> US
+            CN -> CN
             COMBINED -> COMBINED
             else -> COMBINED
         }
@@ -18,8 +20,9 @@ object HomeDisplayMode {
         return when (normalize(value)) {
             TW -> "純台股"
             US -> "純美股"
-            COMBINED -> "台股 + 美股"
-            else -> "台股 + 美股"
+            CN -> "純A股"
+            COMBINED -> "台股 + 美股 + A股"
+            else -> "台股 + 美股 + A股"
         }
     }
 }

@@ -1,6 +1,8 @@
 package com.rsps1008.stockify.data
 
 import com.rsps1008.stockify.ui.screens.HoldingInfo
+import java.time.Instant
+import java.time.ZoneId
 import com.rsps1008.stockify.ui.screens.AssetStockValue
 import com.rsps1008.stockify.ui.screens.HoldingsUiState
 import com.rsps1008.stockify.ui.screens.TransactionUiState
@@ -27,7 +29,8 @@ class OfflineStockRepository(
         val returnRateMode: ReturnRateMode,
         val marginDayCount: Int,
         val feeSettingsByAccount: Map<Int, AccountFeeSettings>,
-        val sharedFeeSettings: AccountFeeSettings
+        val sharedFeeSettings: AccountFeeSettings,
+        val cnFeeSettings: CnTradingRules.FeeSettings = CnTradingRules.FeeSettings()
     )
 
     private val valuationClock = valuationClockFlow()
@@ -66,6 +69,9 @@ class OfflineStockRepository(
             valuationClock,
             settingsDataStore.partialSalesAsRealizedFlow.distinctUntilChanged(),
             settingsDataStore.excludeDividendIncomeFromReturnsFlow.distinctUntilChanged(),
+            exchangeRateService.cnyToTwdRate,
+            settingsDataStore.cnCommissionRateFlow.distinctUntilChanged(),
+            settingsDataStore.cnMinimumCommissionFlow.distinctUntilChanged(),
         ) { values ->
             val stocks = values[0] as List<Stock>
             val transactionsByStock = values[1] as Map<String, List<StockTransaction>>
@@ -82,6 +88,11 @@ class OfflineStockRepository(
             val currentDateMillis = values[12] as Long
             val partialSalesAsRealized = values[13] as Boolean
             val excludeDividendIncomeFromReturns = values[14] as Boolean
+            val cnyToTwdRate = values[15] as Double
+            val cnFeeSettings = CnTradingRules.FeeSettings(
+                commissionRate = values[16] as Double,
+                minimumCommission = values[17] as Double
+            )
             val sharedFeeSettings = AccountFeeSettings(sharedFeeDiscount, minFeeRegular, minFeeOddLot)
             val feeSettingsByAccount = accountFeeSettings(
                 accounts,
@@ -97,6 +108,7 @@ class OfflineStockRepository(
             val filteredStocks = when (mode) {
                 HomeDisplayMode.TW -> transactedStocks.filter { StockMarket.isTw(it.market) }
                 HomeDisplayMode.US -> transactedStocks.filter { StockMarket.isUs(it.market) }
+                HomeDisplayMode.CN -> transactedStocks.filter { StockMarket.isCn(it.market) }
                 else -> transactedStocks
             }
 
@@ -123,7 +135,8 @@ class OfflineStockRepository(
                     currentDateMillis = currentDateMillis,
                     marginDayCount = marginDayCount,
                     includeProfitLossBreakdown = partialSalesAsRealized,
-                    excludeDividendIncomeFromReturns = excludeDividendIncomeFromReturns
+                    excludeDividendIncomeFromReturns = excludeDividendIncomeFromReturns,
+                    cnFeeSettings = cnFeeSettings
                 )
                 return holdingCache.getOrCalculate(inputs, ::calculateHoldingInfo)
             }
@@ -136,6 +149,7 @@ class OfflineStockRepository(
                 when (mode) {
                     HomeDisplayMode.TW -> StockMarket.isTw(holding.stock.market)
                     HomeDisplayMode.US -> StockMarket.isUs(holding.stock.market)
+                    HomeDisplayMode.CN -> StockMarket.isCn(holding.stock.market)
                     else -> true
                 }
             }
@@ -146,28 +160,55 @@ class OfflineStockRepository(
             val usMarketValue = allHoldingInfos
                 .filter { StockMarket.isUs(it.stock.market) }
                 .sumOf { it.marketValue * usdToTwdRate }
+            val cnMarketValue = allHoldingInfos
+                .filter { StockMarket.isCn(it.stock.market) }
+                .sumOf { it.marketValue * cnyToTwdRate }
             val assetStockValues = allHoldingInfos.map { holding ->
                 AssetStockValue(
                     stock = holding.stock,
-                    marketValue = holding.marketValue * if (StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
+                    marketValue = holding.marketValue * CurrencyConversionSupport.rateToTwd(
+                        holding.stock.market,
+                        usdToTwdRate,
+                        cnyToTwdRate
+                    )
                 )
             }
 
             val summaryIsCombined = mode == HomeDisplayMode.COMBINED
             val cumulativePL = holdingInfos.sumOf { holding ->
-                val rate = if (summaryIsCombined && StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
+                val rate = CurrencyConversionSupport.combinedRateToTwd(
+                    holding.stock.market,
+                    summaryIsCombined,
+                    usdToTwdRate,
+                    cnyToTwdRate
+                )
                 holding.totalPL * rate
             }
             val marketValue = holdingInfos.sumOf { holding ->
-                val rate = if (summaryIsCombined && StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
+                val rate = CurrencyConversionSupport.combinedRateToTwd(
+                    holding.stock.market,
+                    summaryIsCombined,
+                    usdToTwdRate,
+                    cnyToTwdRate
+                )
                 holding.marketValue * rate
             }
             val totalCost = holdingInfos.sumOf { holding ->
-                val rate = if (summaryIsCombined && StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
+                val rate = CurrencyConversionSupport.combinedRateToTwd(
+                    holding.stock.market,
+                    summaryIsCombined,
+                    usdToTwdRate,
+                    cnyToTwdRate
+                )
                 (holding.averageCost * holding.shares) * rate
             }
             val totalInvestment = holdingInfos.sumOf { holding ->
-                val rate = if (summaryIsCombined && StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
+                val rate = CurrencyConversionSupport.combinedRateToTwd(
+                    holding.stock.market,
+                    summaryIsCombined,
+                    usdToTwdRate,
+                    cnyToTwdRate
+                )
                 val basis = when (returnRateMode) {
                     ReturnRateMode.CUMULATIVE_INVESTMENT -> holding.totalInvestment
                     ReturnRateMode.REMAINING_POSITION -> holding.remainingPositionInvestment
@@ -192,7 +233,12 @@ class OfflineStockRepository(
                         val stockTransactions = transactionsByStock[stockKey].orEmpty()
                         val currentPrice = realTimeData[stockKey]?.currentPrice ?: 0.0
                         val shares = holdingSharesByKey[stockKey] ?: 0.0
-                        val rate = if (summaryIsCombined && StockMarket.isUs(stock.market)) usdToTwdRate else 1.0
+                        val rate = CurrencyConversionSupport.combinedRateToTwd(
+                            stock.market,
+                            summaryIsCombined,
+                            usdToTwdRate,
+                            cnyToTwdRate
+                        )
                         buildCashFlowsForStock(
                             transactions = stockTransactions,
                             currentPrice = currentPrice,
@@ -212,12 +258,22 @@ class OfflineStockRepository(
                 }
             }
             val dividendIncome = holdingInfos.sumOf { holding ->
-                val rate = if (summaryIsCombined && StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
+                val rate = CurrencyConversionSupport.combinedRateToTwd(
+                    holding.stock.market,
+                    summaryIsCombined,
+                    usdToTwdRate,
+                    cnyToTwdRate
+                )
                 holding.dividendIncome * rate
             }
             val dailyPL = holdingInfos.sumOf { holding ->
-                val rate = if (summaryIsCombined && StockMarket.isUs(holding.stock.market)) usdToTwdRate else 1.0
-                holding.dailyChange * (holding.shares - holding.shortOutstandingShares) * rate
+                val rate = CurrencyConversionSupport.combinedRateToTwd(
+                    holding.stock.market,
+                    summaryIsCombined,
+                    usdToTwdRate,
+                    cnyToTwdRate
+                )
+                holding.dailyPL * rate
             }
 
             HoldingsUiState(
@@ -226,6 +282,7 @@ class OfflineStockRepository(
                 marketValue = marketValue,
                 taiwanMarketValue = taiwanMarketValue,
                 usMarketValue = usMarketValue,
+                cnMarketValue = cnMarketValue,
                 totalCost = totalCost,
                 cumulativePLPercentage = cumulativePLPercentage,
                 dividendIncome = dividendIncome,
@@ -277,6 +334,12 @@ class OfflineStockRepository(
             .combine(settingsDataStore.excludeDividendIncomeFromReturnsFlow.distinctUntilChanged()) { settings, exclude ->
                 settings.copy(excludeDividendIncomeFromReturns = exclude)
             }
+            .combine(settingsDataStore.cnCommissionRateFlow.distinctUntilChanged()) { settings, commissionRate ->
+                settings.copy(cnFeeSettings = settings.cnFeeSettings.copy(commissionRate = commissionRate))
+            }
+            .combine(settingsDataStore.cnMinimumCommissionFlow.distinctUntilChanged()) { settings, minimumCommission ->
+                settings.copy(cnFeeSettings = settings.cnFeeSettings.copy(minimumCommission = minimumCommission))
+            }
 
         return combine(
             stockFlow.distinctUntilChanged(),
@@ -308,7 +371,8 @@ class OfflineStockRepository(
                     returnRateMode = returnRateMode,
                     currentDateMillis = currentDateMillis,
                     marginDayCount = marginDayCount,
-                    excludeDividendIncomeFromReturns = settings.excludeDividendIncomeFromReturns
+                    excludeDividendIncomeFromReturns = settings.excludeDividendIncomeFromReturns,
+                    cnFeeSettings = settings.cnFeeSettings
                 ))
             }
         }.flowOn(Dispatchers.Default)
@@ -408,7 +472,27 @@ class OfflineStockRepository(
         var totalPL = marketValue - costBasis
         var estimatedExitCost = 0.0
 
-        if (preDeductSellFees && marketValue > 0.0 && !StockMarket.isUs(stock.market)) {
+        if (preDeductSellFees && marketValue > 0.0 && StockMarket.isCn(stock.market)) {
+            // China has no TW securities transaction tax; only commission,
+            // transfer fee and stamp duty apply.
+            val cnFeeSettings = inputs.cnFeeSettings
+            val cnMarketValue = effectiveTransactions
+                .groupBy { it.accountId }
+                .values
+                .sumOf { accountTransactions ->
+                    val accountShares = HoldingCalculationSupport.replayLongPosition(
+                        accountTransactions.sortedWith(
+                            compareBy<StockTransaction> { it.date }
+                                .thenBy { it.recordTime }
+                                .thenBy { it.id }
+                        ),
+                        valuationDate = currentDateMillis,
+                        transactionsAreOrdered = true
+                    ).shares
+                    if (accountShares <= 0.0) 0.0 else accountShares * currentPrice
+                }
+            totalPL -= CnTradingRules.exitCost(cnMarketValue, cnFeeSettings)
+        } else if (preDeductSellFees && marketValue > 0.0 && !StockMarket.isUs(stock.market)) {
             val sellFee = estimateTaiwanSellFee(
                 transactions = effectiveTransactions,
                 currentPrice = currentPrice,
@@ -475,6 +559,33 @@ class OfflineStockRepository(
             }
         }
 
+        // 當天買進的股數應以實際買進成本（含手續費）為當日損益基準，
+        // 之前已持有的股數才用昨收；否則當天新建倉會出現「當日賺錢、
+        // 累積虧損」的矛盾數字。
+        val prevClosePrice = currentPrice - dailyChange
+        val storageZone = ZoneId.systemDefault()
+        val todayStartMillis = Instant.ofEpochMilli(currentDateMillis)
+            .atZone(storageZone)
+            .toLocalDate()
+            .atStartOfDay(storageZone)
+            .toInstant()
+            .toEpochMilli()
+        val boughtTodayBasisCorrection = effectiveTransactions
+            .filter { transaction ->
+                transaction.date >= todayStartMillis &&
+                    transaction.buyShares > 0.0 &&
+                    (transaction.type == "買進" || transaction.type == "融資買進")
+            }
+            .sumOf { transaction ->
+                val costPerShare = transaction.expense
+                    .takeIf { it > 0.0 }
+                    ?.div(transaction.buyShares)
+                    ?: transaction.buyPrice
+                (prevClosePrice - costPerShare) * transaction.buyShares
+            }
+        val dailyPL = dailyChange * (shares - shortSummary.outstandingShares) +
+            boughtTodayBasisCorrection
+
         return HoldingInfo(
             stock = stock,
             shares = shares,
@@ -490,6 +601,7 @@ class OfflineStockRepository(
             totalPLPercentage = totalPLPercentage,
             dailyChange = dailyChange,
             dailyChangePercentage = dailyChangePercentage,
+            dailyPL = dailyPL,
             limitState = limitState
             ,marginOutstandingPrincipal = marginSummary.outstandingPrincipal
             ,marginAccruedInterest = marginSummary.accruedInterest

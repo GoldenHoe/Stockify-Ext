@@ -18,6 +18,8 @@ data class JsonStock(
     val stockType: String
 )
 
+const val CN_STOCKS_ASSET_NAME = "cn_stocks.json"
+
 class StockListRepository(private val context: Context) {
 
     private val jsonFile: File by lazy {
@@ -32,6 +34,10 @@ class StockListRepository(private val context: Context) {
 
     fun readBundledStocks(): List<Stock> {
         return readStocksFromAsset("stocks.json")
+    }
+
+    fun readCnStocks(): List<Stock> {
+        return readStocksFromAsset(CN_STOCKS_ASSET_NAME)
     }
 
     fun refreshBundledCacheFromAsset() {
@@ -58,16 +64,7 @@ class StockListRepository(private val context: Context) {
             context.assets.open(assetName).use { inputStream ->
                 val jsonString = inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 val jsonStocks = Json.decodeFromString<List<JsonStock>>(jsonString)
-                jsonStocks.map {
-                    Stock(
-                        name = it.name,
-                        code = it.code,
-                        market = if (it.market == StockMarket.US) StockMarket.US else StockMarket.TW,
-                        exchange = StockExchange.normalize(it.market),
-                        industry = it.industry,
-                        stockType = it.stockType
-                    )
-                }
+                jsonStocks.map { it.toStock() }
             }
         }.getOrDefault(emptyList())
     }
@@ -97,16 +94,29 @@ class StockListRepository(private val context: Context) {
     private fun readStocksFromJsonFile(): List<Stock> {
         val jsonString = jsonFile.readText()
         val jsonStocks = Json.decodeFromString<List<JsonStock>>(jsonString)
-        return jsonStocks.map {
-            Stock(
-                name = it.name,
-                code = it.code,
-                market = if (it.market == StockMarket.US) StockMarket.US else StockMarket.TW,
-                exchange = StockExchange.normalize(it.market),
-                industry = it.industry,
-                stockType = it.stockType
-            )
+        return jsonStocks.map { it.toStock() }
+    }
+
+    private fun JsonStock.toStock(): Stock {
+        val normalizedMarket = when {
+            StockMarket.isUs(market) -> StockMarket.US
+            StockMarket.isCn(market) || StockExchange.isCn(market) -> StockMarket.CN
+            else -> StockMarket.TW
         }
+        val normalizedExchange = when (normalizedMarket) {
+            // CN assets store the exchange in the market field, like the TW asset.
+            StockMarket.CN -> StockExchange.normalize(market).takeIf { StockExchange.isCn(it) }
+                ?: StockExchange.fromCnCode(code)
+            else -> StockExchange.normalize(market)
+        }
+        return Stock(
+            name = name,
+            code = code,
+            market = normalizedMarket,
+            exchange = normalizedExchange,
+            industry = industry,
+            stockType = stockType
+        )
     }
 
     suspend fun saveStocks(stocks: List<Stock>) {

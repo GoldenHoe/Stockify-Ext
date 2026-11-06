@@ -48,10 +48,10 @@ internal fun latestExpectedHistoryDate(
     now: ZonedDateTime,
     market: String
 ): java.time.LocalDate {
-    val marketCloseTime = if (StockMarket.isUs(market)) {
-        LocalTime.of(16, 0)
-    } else {
-        LocalTime.of(13, 30)
+    val marketCloseTime = when {
+        StockMarket.isUs(market) -> LocalTime.of(16, 0)
+        StockMarket.isCn(market) -> LocalTime.of(15, 0)
+        else -> LocalTime.of(13, 30)
     }
     val isWeekday = now.dayOfWeek in DayOfWeek.MONDAY..DayOfWeek.FRIDAY
     var latestDate = if (isWeekday && !now.toLocalTime().isBefore(marketCloseTime)) {
@@ -81,6 +81,32 @@ internal fun mergeHistoryPointsPreferLatest(
     .associateBy { it.date }
     .values
     .sortedBy { it.date }
+
+/**
+ * Parses Eastmoney kline rows:
+ * date,open,close,high,low,volume,amount,amplitude.
+ */
+internal fun parseEastmoneyKlineResponse(jsonText: String): List<StockHistoryPoint> {
+    val points = mutableListOf<StockHistoryPoint>()
+    if (jsonText.isBlank()) return points
+    val root = runCatching { Json.parseToJsonElement(jsonText) }.getOrNull() as? JsonObject
+        ?: return points
+    val data = root["data"] as? JsonObject ?: return points
+    val klines = data["klines"] as? JsonArray ?: return points
+    val datePattern = Regex("\\d{4}-\\d{2}-\\d{2}")
+    for (element in klines) {
+        val line = (element as? JsonPrimitive)?.contentOrNull?.trim() ?: continue
+        val parts = line.split(',')
+        if (parts.size < 3) continue
+        val date = parts[0].trim()
+        if (!date.matches(datePattern)) continue
+        val close = parts[2].trim().replace(",", "").toDoubleOrNull()
+            ?.takeIf { it.isFinite() && it > 0.0 }
+            ?: continue
+        points.add(StockHistoryPoint(date, close))
+    }
+    return points
+}
 
 internal class StockHistoryCache {
     private val lock = Any()
@@ -183,8 +209,8 @@ class TwseStockHistoryService(
         val normalizedCode = canonicalStockCode(stockCode)
         val normalizedMarket = StockMarket.normalize(market)
         val stock = stockDao.getStockByCode(normalizedCode, normalizedMarket)
-        return if (StockMarket.isTw(normalizedMarket)) {
-            fetchTwHistory(
+        return when {
+            StockMarket.isTw(normalizedMarket) -> fetchTwHistory(
                 stockCode = normalizedCode,
                 rangeMonths = rangeMonths,
                 exchange = StockExchange.normalize(stock?.exchange),
@@ -192,8 +218,14 @@ class TwseStockHistoryService(
                 market = normalizedMarket,
                 forceRefreshCurrentMonth = forceRefreshCurrentMonth
             )
-        } else {
-            fetchUsHistory(
+            StockMarket.isCn(normalizedMarket) -> fetchCnHistory(
+                stockCode = normalizedCode,
+                rangeMonths = rangeMonths,
+                onProgress = onProgress,
+                market = normalizedMarket,
+                forceRefreshCurrentMonth = forceRefreshCurrentMonth
+            )
+            else -> fetchUsHistory(
                 normalizedCode,
                 rangeMonths,
                 onProgress,
@@ -316,6 +348,120 @@ class TwseStockHistoryService(
         }
 
         // Return sorted chronologically by date
+        mergeHistoryPointsPreferLatest(resultPoints)
+    }
+
+    /**
+     * China A-share history comes from Eastmoney's daily kline endpoint, which
+     * returns the whole requested range in one response.
+     */
+    private suspend fun fetchCnHistory(
+        stockCode: String,
+        rangeMonths: Int,
+        onProgress: (step: Int, total: Int) -> Unit,
+        market: String,
+        forceRefreshCurrentMonth: Boolean
+    ): List<StockHistoryPoint> = withContext(Dispatchers.IO) {
+        val latestChartDateStr = getLatestChartDateString(market)
+        val latestChartMonthStr = latestChartDateStr.take(7).replace("-", "")
+        val targetMonths = getTargetMonths(rangeMonths, market).filter { it <= latestChartMonthStr }
+        val resultPoints = mutableListOf<StockHistoryPoint>()
+        val cacheGeneration = cache.currentGeneration()
+        val missingMonths = mutableListOf<String>()
+
+        for (monthStr in targetMonths) {
+            val cacheKey = historyCacheKey(market, stockCode, monthStr)
+            val cached = cache.get(cacheKey)
+            if (cached != null) {
+                resultPoints.addAll(cached.filterForChart(latestChartDateStr))
+                if (shouldUseHistoryMonthWithoutRefresh(
+                        month = monthStr,
+                        latestChartMonth = latestChartMonthStr,
+                        latestChartDate = latestChartDateStr,
+                        points = cached,
+                        forceRefreshCurrentMonth = forceRefreshCurrentMonth
+                    )
+                ) {
+                    continue
+                }
+            }
+
+            val monthPrefix = "${monthStr.substring(0, 4)}-${monthStr.substring(4, 6)}"
+            val localData = stockDao.getHistoryPricesForMonth(stockCode, market, monthPrefix)
+            if (localData.isNotEmpty()) {
+                val localPoints = localData.map { StockHistoryPoint(it.date, it.price) }
+                    .filterForChart(latestChartDateStr)
+                resultPoints.addAll(localPoints)
+                if (shouldUseHistoryMonthWithoutRefresh(
+                        monthStr,
+                        latestChartMonthStr,
+                        latestChartDateStr,
+                        localPoints,
+                        forceRefreshCurrentMonth
+                    )
+                ) {
+                    cache.putIfCurrent(cacheKey, localPoints, cacheGeneration)
+                    continue
+                }
+            }
+            missingMonths.add(monthStr)
+        }
+
+        if (missingMonths.isEmpty()) {
+            if (targetMonths.isNotEmpty()) onProgress(targetMonths.size, targetMonths.size)
+            return@withContext mergeHistoryPointsPreferLatest(resultPoints)
+        }
+
+        onProgress(1, 1)
+        val secId = eastmoneySecId(stockCode)
+        if (secId == null) return@withContext mergeHistoryPointsPreferLatest(resultPoints)
+        val begin = "${missingMonths.first()}01"
+        val url = "https://push2his.eastmoney.com/api/qt/stock/kline/get" +
+            "?secid=$secId&fields1=f1,f2,f3,f4,f5,f6" +
+            "&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=$begin&end=20500101"
+
+        val body = retryOnTransientNetworkFailure(TAG, stockCode) {
+            client.get(url) {
+                header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            }.bodyAsText()
+        }
+
+        if (body != null) {
+            try {
+                val points = parseEastmoneyKlineResponse(body).filterForChart(latestChartDateStr)
+                if (points.isNotEmpty()) {
+                    stockDao.insertHistoryPrices(
+                        points.map { StockHistoryPrice(stockCode, it.date, it.price, market) }
+                    )
+                    val groupedByMonth = points.groupBy { it.date.replace("-", "").substring(0, 6) }
+                    for ((month, monthPoints) in groupedByMonth) {
+                        if (shouldUseHistoryMonthWithoutRefresh(
+                                month,
+                                latestChartMonthStr,
+                                latestChartDateStr,
+                                monthPoints
+                            )
+                        ) {
+                            cache.putIfCurrent(
+                                historyCacheKey(market, stockCode, month),
+                                monthPoints,
+                                cacheGeneration
+                            )
+                        }
+                    }
+                    resultPoints.clear()
+                    for (monthStr in targetMonths) {
+                        val cached = groupedByMonth[monthStr]
+                            ?: cache.get(historyCacheKey(market, stockCode, monthStr))
+                            ?: emptyList()
+                        resultPoints.addAll(cached.filterForChart(latestChartDateStr))
+                    }
+                }
+            } catch (e: Exception) {
+                safeLogE("Error parsing Eastmoney history response for $stockCode", e)
+            }
+        }
+
         mergeHistoryPointsPreferLatest(resultPoints)
     }
 
@@ -520,14 +666,20 @@ class TwseStockHistoryService(
     }
 
     private fun getTargetMonths(rangeMonths: Int, market: String): List<String> {
-        val timeZone = if (StockMarket.isUs(market)) "America/New_York" else "Asia/Taipei"
+        val timeZone = marketTimeZone(market)
         return targetHistoryMonths(rangeMonths, YearMonth.now(clock.withZone(ZoneId.of(timeZone))))
     }
 
     private fun getLatestChartDateString(market: String): String {
-        val timeZone = if (StockMarket.isUs(market)) "America/New_York" else "Asia/Taipei"
+        val timeZone = marketTimeZone(market)
         val now = ZonedDateTime.now(clock.withZone(ZoneId.of(timeZone)))
         return latestExpectedHistoryDate(now, market).toString()
+    }
+
+    private fun marketTimeZone(market: String): String = when {
+        StockMarket.isUs(market) -> "America/New_York"
+        StockMarket.isCn(market) -> "Asia/Shanghai"
+        else -> "Asia/Taipei"
     }
 
     private fun List<StockHistoryPoint>.filterForChart(latestChartDateStr: String): List<StockHistoryPoint> {

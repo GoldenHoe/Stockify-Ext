@@ -27,6 +27,7 @@ import com.rsps1008.stockify.data.TransactionDateSupport
 import com.rsps1008.stockify.data.TransactionCostSupport
 import com.rsps1008.stockify.data.AccountFeeSettings
 import com.rsps1008.stockify.data.accountFeeSettings
+import com.rsps1008.stockify.data.CnTradingRules
 import com.rsps1008.stockify.ui.screens.HoldingInfo
 import com.rsps1008.stockify.ui.screens.TransactionUiState
 import kotlinx.coroutines.Dispatchers
@@ -94,7 +95,8 @@ private data class DetailSettingsBundle(
     val minFeeOddLot: Int,
     val returnRateMode: ReturnRateMode,
     val marginDayCount: Int,
-    val excludeDividendIncomeFromReturns: Boolean
+    val excludeDividendIncomeFromReturns: Boolean,
+    val cnFeeSettings: CnTradingRules.FeeSettings = CnTradingRules.FeeSettings()
 )
 
 private data class HistoricalPointCalculationResult(
@@ -169,6 +171,12 @@ class StockDetailViewModel(
         }
         .combine(settingsDataStore.minFeeOddLotFlow) { settings, minFeeOddLot ->
             settings.copy(minFeeOddLot = minFeeOddLot)
+        }
+        .combine(settingsDataStore.cnCommissionRateFlow) { settings, commissionRate ->
+            settings.copy(cnFeeSettings = settings.cnFeeSettings.copy(commissionRate = commissionRate))
+        }
+        .combine(settingsDataStore.cnMinimumCommissionFlow) { settings, minimumCommission ->
+            settings.copy(cnFeeSettings = settings.cnFeeSettings.copy(minimumCommission = minimumCommission))
         }
         .combine(stockDao.getAllAccountsFlow()) { settings, accounts ->
             settings.copy(
@@ -288,7 +296,8 @@ class StockDetailViewModel(
                     marginSummary = marginSummary,
                     shortSummary = shortSummary,
                     historicalCashFlowTimeline = historicalCashFlowTimeline,
-                    historicalShortXirrTimeline = historicalShortXirrTimeline
+                    historicalShortXirrTimeline = historicalShortXirrTimeline,
+                    cnFeeSettings = settings.cnFeeSettings
                 )
                 personalPoints.add(result.point)
                 previousXirrGuessRate = result.xirrGuessRate ?: previousXirrGuessRate
@@ -313,7 +322,9 @@ class StockDetailViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), HistoryState.Idle)
 
     init {
-        if (StockMarket.isTw(normalizedMarket) || normalizedMarket == StockMarket.US) {
+        if (StockMarket.isTw(normalizedMarket) || StockMarket.isUs(normalizedMarket) ||
+            StockMarket.isCn(normalizedMarket)
+        ) {
             fetchStockHistory(HistoryRange.ONE_MONTH)
         }
     }
@@ -344,10 +355,10 @@ class StockDetailViewModel(
             try {
                 val rawPoints = twseStockHistoryService.fetchHistory(stockCode, rangeMonths, normalizedMarket) { step, total ->
                     val progress = step.toFloat() / total.toFloat()
-                    val statusText = if (StockMarket.isUs(market)) {
-                        "正在載入美股歷史股價..."
-                    } else {
-                        "正在載入第 $step/$total 個月..."
+                    val statusText = when {
+                        StockMarket.isUs(market) -> "正在載入美股歷史股價..."
+                        StockMarket.isCn(market) -> "正在載入A股歷史股價..."
+                        else -> "正在載入第 $step/$total 個月..."
                     }
                     if (!hasCompleteCachedHistory && isCurrentRequest()) {
                         _historyStateInternal.value = DetailHistoryStateInternal.Loading(progress, statusText)
@@ -396,7 +407,8 @@ class StockDetailViewModel(
         marginSummary: MarginSummary,
         shortSummary: ShortSellingSummary,
         historicalCashFlowTimeline: HistoricalTransactionCashFlowTimeline?,
-        historicalShortXirrTimeline: ShortSellingCalculationSupport.HistoricalXirrTimeline?
+        historicalShortXirrTimeline: ShortSellingCalculationSupport.HistoricalXirrTimeline?,
+        cnFeeSettings: CnTradingRules.FeeSettings = CnTradingRules.FeeSettings()
     ): HistoricalPointCalculationResult {
         val txs = transactions
         val shares = replay.shares
@@ -441,7 +453,9 @@ class StockDetailViewModel(
         totalPL -= marginSummary.totalInterestExpense
         totalPL += shortIncome - shortCoverExpense - shortSummary.outstandingShares * ptPrice - shortSummary.accruedBorrowFee - shortSummary.compensationExpense
 
-        if (preDeductSellFees && marketValue > 0.0 && StockMarket.isTw(market)) {
+        if (preDeductSellFees && marketValue > 0.0 && StockMarket.isCn(market)) {
+            totalPL -= CnTradingRules.exitCost(marketValue, cnFeeSettings)
+        } else if (preDeductSellFees && marketValue > 0.0 && StockMarket.isTw(market)) {
             val sellFee = estimateTaiwanSellFee(
                 transactions = txs,
                 currentPrice = ptPrice,

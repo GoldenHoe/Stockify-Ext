@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,7 +35,6 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -85,6 +85,9 @@ import com.rsps1008.stockify.data.Account
 import com.rsps1008.stockify.data.PdfStockImportPreview
 import com.rsps1008.stockify.ui.viewmodel.SettingsViewModel
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,7 +96,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val DataManagementButtonShape: Shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+private val DataManagementButtonShape: Shape = androidx.compose.foundation.shape.RoundedCornerShape(percent = 50)
 
 @Composable
 fun DataManagementScreen() {
@@ -311,7 +314,7 @@ fun DataManagementScreen() {
 
     LaunchedEffect(message) {
         message?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            Toast.makeText(context, it.localized(), Toast.LENGTH_LONG).show()
             viewModel.onMessageShown()
         }
     }
@@ -364,22 +367,17 @@ fun DataManagementScreen() {
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        SampledResourceImage(
-            resId = R.drawable.stockify,
-            contentDescription = "Stockify Logo",
-            modifier = Modifier.fillMaxWidth(0.35f)
-        )
-        Spacer(modifier = Modifier.height(6.dp))
+        StockifyTopBar(title = "資料管理")
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp)
         ) {
             item {
                 CloudBackupSection(
@@ -879,15 +877,31 @@ private fun PdfImportTutorialDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(460.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("匯入前請先使用『集保E存摺 APP』並依照下列步驟匯出 PDF。")
-                PdfTutorialImage(resId = R.drawable.pdf_import_tutorial_1, step = 1)
-                PdfTutorialImage(resId = R.drawable.pdf_import_tutorial_2, step = 2)
-                PdfTutorialImage(resId = R.drawable.pdf_import_tutorial_3, step = 3)
-                PdfTutorialImage(resId = R.drawable.pdf_import_tutorial_4, step = 4)
+                Text("PDF 庫存匯入僅支援台灣券商匯出的庫存明細；A 股與美股請使用 CSV 或手動新增。")
+                Text("匯入前請先使用「集保 e 存摺」App，並依照下列步驟匯出 PDF。")
+                PdfTutorialStep(
+                    step = 1,
+                    title = "開啟證券存摺",
+                    description = "在「集保 e 存摺」首頁選擇「證券存摺」，再點選「匯出證券交易明細」。"
+                )
+                PdfTutorialStep(
+                    step = 2,
+                    title = "設定匯出條件",
+                    description = "匯出條件選擇「不需要長時間資料」，日期區間選擇需要的範圍後匯出。"
+                )
+                PdfTutorialStep(
+                    step = 3,
+                    title = "下載匯出檔",
+                    description = "到「通知中心」開啟「明細匯出通知」，下載券商提供的 PDF 檔。"
+                )
+                PdfTutorialStep(
+                    step = 4,
+                    title = "回到本 App 匯入",
+                    description = "選擇剛剛下載的 PDF，若券商有設定密碼請一併輸入。"
+                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
@@ -914,37 +928,19 @@ private fun PdfImportTutorialDialog(
 }
 
 @Composable
-private fun PdfTutorialImage(
-    resId: Int,
-    step: Int
+private fun PdfTutorialStep(
+    step: Int,
+    title: String,
+    description: String
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("步驟 $step", style = MaterialTheme.typography.titleMedium)
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val context = LocalContext.current
-            val density = LocalDensity.current
-            val targetWidthPx = with(density) { maxWidth.roundToPx() }
-            val bitmap by produceState<Bitmap?>(
-                initialValue = null,
-                key1 = resId,
-                key2 = targetWidthPx
-            ) {
-                value = withContext(Dispatchers.IO) {
-                    decodeSampledResource(context.resources, resId, targetWidthPx)
-                }
-            }
-
-            bitmap?.let {
-                Image(
-                    bitmap = it.asImageBitmap(),
-                    contentDescription = "PDF 匯出教學步驟 $step",
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.FillWidth
-                )
-            }
-        }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("步驟 $step・$title", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
-
 }
 
 @Composable

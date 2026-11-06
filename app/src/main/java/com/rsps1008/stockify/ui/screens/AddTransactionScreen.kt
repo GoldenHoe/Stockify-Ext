@@ -28,7 +28,6 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
@@ -51,6 +50,7 @@ import com.rsps1008.stockify.StockifyApplication
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,24 +61,37 @@ import com.rsps1008.stockify.ui.viewmodel.AddTransactionViewModel
 import com.rsps1008.stockify.ui.viewmodel.EditTransactionState
 import com.rsps1008.stockify.ui.viewmodel.calculateSupplementaryHealthInsurancePremium
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.IconButton
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
 import com.rsps1008.stockify.ui.viewmodel.TRANSACTION_SUBMISSION_IN_PROGRESS
 import com.rsps1008.stockify.ui.navigation.Screen
 import com.rsps1008.stockify.data.dividend.YahooDividendRepository
 import com.rsps1008.stockify.data.Stock
 import com.rsps1008.stockify.data.StockMarket
+import com.rsps1008.stockify.data.CnTradingRules
 import com.rsps1008.stockify.data.calculateStockDividendShares
 import com.rsps1008.stockify.data.formatMarketAmount
 import com.rsps1008.stockify.data.formatShareInputValue
+import com.rsps1008.stockify.data.usesFractionalCurrency
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val AddTransactionButtonShape: Shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+private val AddTransactionButtonShape: Shape = androidx.compose.foundation.shape.RoundedCornerShape(percent = 50)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,6 +120,8 @@ fun AddTransactionScreen(
             application = application,
             realtimeStockDataService = application.realtimeStockDataService,
             dividendRepository = YahooDividendRepository(application.httpClient),
+            cnDividendRepository = com.rsps1008.stockify.data.dividend.CnDividendRepository(application.httpClient),
+            cnStockSuggestService = com.rsps1008.stockify.data.CnStockSuggestService(application.httpClient),
             exchangeRateService = application.exchangeRateService
         )
     )
@@ -186,8 +201,11 @@ fun AddTransactionScreen(
         mutableStateOf(transactionId == null)
     }
 
-    val defaultDividendFeeForStock = remember(stockCode, defaultDividendFee) {
-        if (StockMarket.isUs(StockMarket.inferFromCode(stockCode))) {
+    val defaultDividendFeeForStock = remember(stockCode, defaultDividendFee, selectedStock, prefillMarket) {
+        val market = StockMarket.normalize(
+            selectedStock?.market ?: prefillMarket ?: StockMarket.inferFromCode(stockCode)
+        )
+        if (StockMarket.isUs(market) || StockMarket.isCn(market)) {
             0
         } else {
             defaultDividendFee
@@ -235,10 +253,58 @@ fun AddTransactionScreen(
         selectedStock?.market ?: prefillMarket ?: StockMarket.inferFromCode(stockCode)
     )
     val isUsStock = StockMarket.isUs(transactionMarket)
+    val isCnStock = StockMarket.isCn(transactionMarket)
     val isTwStock = StockMarket.isTw(transactionMarket)
-    val shareStep = if (isUsStock) 1.0 else 1000.0
+    // A-share board lots are 100 shares ("1 手").
+    val shareStep = when {
+        isUsStock -> 1.0
+        isCnStock -> 100.0
+        else -> 1000.0
+    }
     val selectedMarginLot = marginLots.firstOrNull { it.lotId == marginRepaymentLotId }
     val selectedShortLot = shortLots.firstOrNull { it.lotId == shortLotId }
+    // A-share orders outside the daily limit band are usually a typo, so warn
+    // while the previous close is known from the realtime quote.
+    val realtimeQuotes by application.realtimeStockDataService.realtimeStockInfo.collectAsState()
+    val selectedQuote = realtimeQuotes[
+        com.rsps1008.stockify.data.stockCacheKey(transactionMarket, stockCode)
+    ]
+    val previousClose = selectedQuote?.let { it.currentPrice - it.change }?.takeIf { it > 0.0 }
+    // The exchange published limit prices (f51/f52 or Tencent) win over the computed
+    // ±N% band; the band remains the fallback when the source did not report them.
+    val quoteLimitUp = selectedQuote?.limitUpPrice
+    val quoteLimitDown = selectedQuote?.limitDownPrice
+    val cnPriceLimitHint = remember(
+        previousClose, transactionMarket, stockCode, stockName, quoteLimitUp, quoteLimitDown
+    ) {
+        if (!isCnStock || previousClose == null) {
+            null
+        } else {
+            CnTradingRules.priceLimitHint(
+                previousClose = previousClose,
+                stockCode = stockCode,
+                stockName = stockName,
+                quoteLimitUp = quoteLimitUp,
+                quoteLimitDown = quoteLimitDown
+            )
+        }
+    }
+    val cnPriceLimitWarning = remember(
+        price, previousClose, transactionMarket, stockCode, stockName, quoteLimitUp, quoteLimitDown
+    ) {
+        if (!isCnStock || previousClose == null) {
+            null
+        } else {
+            CnTradingRules.priceLimitWarning(
+                price = price.toDoubleOrNull() ?: 0.0,
+                previousClose = previousClose,
+                stockCode = stockCode,
+                stockName = stockName,
+                quoteLimitUp = quoteLimitUp,
+                quoteLimitDown = quoteLimitDown
+            )
+        }
+    }
     val effectiveMarginRepayment = resolveSellMarginRepayment(marginRepayment, income)
     val onTradePriceChanged: (String) -> Unit = { value ->
         price = value
@@ -606,38 +672,39 @@ fun AddTransactionScreen(
         else -> false
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
-    ) {
-        Text(text = "選擇帳戶", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
+    Column(modifier = Modifier.fillMaxSize()) {
+        StockifyTopBar(
+            title = if (transactionId != null) "編輯交易" else "新增交易",
+            onBack = { popBackStackOrNavigateToTransactions(navController) }
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
         var accountDropdownExpanded by remember { mutableStateOf(false) }
-        Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
-                onClick = { accountDropdownExpanded = true },
-                modifier = Modifier.fillMaxWidth(),
-                shape = AddTransactionButtonShape
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val activeAccount = accounts.find { it.id == selectedAccountId }
-                    Text(text = activeAccount?.name ?: "預設帳戶")
-                    Icon(
-                        imageVector = Icons.Default.ArrowDropDown,
-                        contentDescription = "Dropdown"
-                    )
-                }
-            }
-            DropdownMenu(
+        ExposedDropdownMenuBox(
+            expanded = accountDropdownExpanded,
+            onExpandedChange = { accountDropdownExpanded = it },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = (accounts.find { it.id == selectedAccountId }?.name ?: "預設帳戶").localized(),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("選擇帳戶") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = accountDropdownExpanded)
+                },
+                modifier = Modifier
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    .fillMaxWidth(),
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+            )
+            ExposedDropdownMenu(
                 expanded = accountDropdownExpanded,
                 onDismissRequest = { accountDropdownExpanded = false },
                 modifier = Modifier.fillMaxWidth()
@@ -744,27 +811,39 @@ fun AddTransactionScreen(
             Spacer(modifier = Modifier.height(8.dp))
             LabeledOutlinedTextField(
                 label = "股票代號",
-                value = formatStockCodeLabel(selectedStock),
+                value = formatStockCodeLabel(selectedStock).localized(),
                 onValueChange = {},
                 readOnly = true
             )
         } else {
             LabeledOutlinedTextField(
                 label = "股票",
-                value = formatStockDisplayLabel(selectedStock, stockCode, stockName),
+                value = formatStockDisplayLabel(selectedStock, stockCode, stockName).localized(),
                 onValueChange = {},
                 readOnly = true
             )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "交易日期", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
-        Button(
-            onClick = { showDatePicker = true },
-            shape = AddTransactionButtonShape
-        ) {
-            Text(text = SimpleDateFormat("yyyy/MM/dd", locale).format(Date(date)))
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = SimpleDateFormat("yyyy/MM/dd", locale).format(Date(date)),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("交易日期") },
+                trailingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.CalendarMonth,
+                        contentDescription = "選擇日期".localized()
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable { showDatePicker = true }
+            )
         }
         if (showDatePicker) {
             val datePickerState = rememberDatePickerState(
@@ -799,7 +878,7 @@ fun AddTransactionScreen(
             TransactionTypeChip("減資", transactionType == "減資") { selectTransactionType("減資") }
             TransactionTypeChip("分割", transactionType == "分割") { selectTransactionType("分割") }
         }
-        if (marginFeatureEnabled && !isUsStock) {
+        if (marginFeatureEnabled && isTwStock) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 TransactionTypeChip("融資買進", transactionType == "融資買進") { selectTransactionType("融資買進") }
@@ -836,6 +915,22 @@ fun AddTransactionScreen(
                             step = shareStep,
                             allowDecimal = isUsStock
                         )
+                        cnPriceLimitHint?.let { hint ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = hint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        cnPriceLimitWarning?.let { warning ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = warning,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         if (transactionType == "融資買進") {
                             Spacer(modifier = Modifier.height(8.dp))
                             LabeledOutlinedTextField(
@@ -876,7 +971,7 @@ fun AddTransactionScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         // 手續費
                         EditableTextStyled(
-                            label = "手續費 (點擊數字修改)",
+                            label = "手續費",
                             value = formatFeeDisplayValue(fee, transactionMarket),
                             onValueChange = { newFee ->
                                 viewModel.updateFee(
@@ -889,11 +984,9 @@ fun AddTransactionScreen(
                             },
                             style = MaterialTheme.typography.bodyLarge
                         )
-                        androidx.compose.material3.HorizontalDivider()
-                        Spacer(modifier = Modifier.height(8.dp))
                         // 支出金額
                         EditableTextStyled(
-                            label = "支出金額 (點擊數字修改)",
+                            label = "支出金額",
                             value = if (expense > 0) formatMarketAmount(expense, transactionMarket) else "",
                             editValue = formatEditableAmountValue(expense, transactionMarket),
                             onValueChange = { newExpense ->
@@ -902,7 +995,6 @@ fun AddTransactionScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             keyboardType = KeyboardType.Decimal
                         )
-                        androidx.compose.material3.HorizontalDivider()
                     }
                 }
             }
@@ -1028,13 +1120,29 @@ fun AddTransactionScreen(
                             step = shareStep,
                             allowDecimal = isUsStock
                         )
+                        cnPriceLimitHint?.let { hint ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = hint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        cnPriceLimitWarning?.let { warning ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = warning,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         if (transactionType == "融券賣出") {
                             Spacer(modifier = Modifier.height(8.dp))
                             LabeledOutlinedTextField(label = "借券年費率 (%)", value = shortBorrowAnnualRate, onValueChange = { shortBorrowAnnualRate = it }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                         }
                         if (transactionType == "賣出" &&
                             (marginFeatureEnabled || sellRepaysMargin) &&
-                            !isUsStock
+                            isTwStock
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(checked = sellRepaysMargin, onCheckedChange = { sellRepaysMargin = it })
@@ -1084,7 +1192,7 @@ fun AddTransactionScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         // 手續費
                         EditableTextStyled(
-                            label = "手續費 (點擊數字修改)",
+                            label = "手續費",
                             value = formatFeeDisplayValue(fee, transactionMarket),
                             onValueChange = { newFee ->
                                 viewModel.updateFee(
@@ -1098,11 +1206,9 @@ fun AddTransactionScreen(
                             style = MaterialTheme.typography.bodyLarge
                         )
 
-                        androidx.compose.material3.HorizontalDivider()
-                        Spacer(modifier = Modifier.height(8.dp))
                         // 交易稅
                         EditableTextStyled(
-                            label = "交易稅 (點擊數字修改)",
+                            label = "交易稅",
                             value = formatTaxDisplayValue(tax, transactionMarket),
                             onValueChange = { newTax ->
                                 viewModel.updateTax(
@@ -1114,11 +1220,9 @@ fun AddTransactionScreen(
                             },
                             style = MaterialTheme.typography.bodyLarge
                         )
-                        androidx.compose.material3.HorizontalDivider()
-                        Spacer(modifier = Modifier.height(8.dp))
                         // 收入金額
                         EditableTextStyled(
-                            label = "收入金額 (點擊數字修改)",
+                            label = "收入金額",
                             value = if (income > 0) formatMarketAmount(income, transactionMarket) else "",
                             editValue = formatEditableAmountValue(income, transactionMarket),
                             onValueChange = { newIncome ->
@@ -1127,7 +1231,6 @@ fun AddTransactionScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             keyboardType = KeyboardType.Decimal
                         )
-                        androidx.compose.material3.HorizontalDivider()
                     }
                 }
             }
@@ -1140,7 +1243,7 @@ fun AddTransactionScreen(
                     Button(
                         onClick = {
                             if (stockCode.isBlank()) {
-                                Toast.makeText(context, "沒有股票代號", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "沒有股票代號".localized(), Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
 
@@ -1177,11 +1280,11 @@ fun AddTransactionScreen(
                                         date = sdf.parse(it)?.time ?: date
                                     }
 
-                                    Toast.makeText(context, "已帶入最近一次配息（${dateStr ?: "-"}）", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "已帶入最近一次配息（${dateStr ?: "-"}）".localized(), Toast.LENGTH_SHORT).show()
                                 },
                                 onFail = {
                                     if (isCurrentAutoFillRequest()) {
-                                        Toast.makeText(context, "找不到最近一次配息資料", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "找不到最近一次配息資料".localized(), Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             )
@@ -1237,27 +1340,23 @@ fun AddTransactionScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         EditableTextStyled(
-                            label = "配息手續費 (點擊數字修改)",
+                            label = "配息手續費",
                             value = formatFeeDisplayValue(dividendFee.toDoubleOrNull() ?: 0.0, transactionMarket),
                             editValue = dividendFee,
                             onValueChange = { dividendFee = it },
                             style = MaterialTheme.typography.bodyLarge,
                             keyboardType = KeyboardType.Decimal
                         )
-                        androidx.compose.material3.HorizontalDivider()
-                        Spacer(modifier = Modifier.height(8.dp))
                         EditableTextStyled(
-                            label = "補充保費 (點擊數字修改)",
+                            label = "補充保費",
                             value = formatFeeDisplayValue(supplementaryHealthInsurancePremium.toDoubleOrNull() ?: 0.0, transactionMarket),
                             editValue = supplementaryHealthInsurancePremium,
                             onValueChange = { supplementaryHealthInsurancePremium = it },
                             style = MaterialTheme.typography.bodyLarge,
                             keyboardType = KeyboardType.Decimal
                         )
-                        androidx.compose.material3.HorizontalDivider()
-                        Spacer(modifier = Modifier.height(8.dp))
                         EditableTextStyled(
-                            label = "股息總額 (點擊數字修改)",
+                            label = "股息總額",
                             value = dividendIncome,
                             editValue = dividendIncome,
                             onValueChange = {
@@ -1274,7 +1373,7 @@ fun AddTransactionScreen(
                 Button(
                     onClick = {
                         if (stockCode.isBlank()) {
-                            Toast.makeText(context, "沒有股票代號", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "沒有股票代號".localized(), Toast.LENGTH_SHORT).show()
                             return@Button
                         }
 
@@ -1310,11 +1409,11 @@ fun AddTransactionScreen(
                                     date = sdf.parse(it)?.time ?: date
                                 }
 
-                                Toast.makeText(context, "已帶入最近一次配股（${dateStr ?: "-"}）", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "已帶入最近一次配股（${dateStr ?: "-"}）".localized(), Toast.LENGTH_SHORT).show()
                             },
                             onFail = {
                                 if (isCurrentAutoFillRequest()) {
-                                    Toast.makeText(context, "找不到最近一次配股資料", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "找不到最近一次配股資料".localized(), Toast.LENGTH_SHORT).show()
                                 }
                             }
                         )
@@ -1361,7 +1460,7 @@ fun AddTransactionScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         EditableTextStyled(
-                            label = "配發股數 (點擊數字修改)",
+                            label = "配發股數",
                             value = if (shares.isBlank()) "" else formatShareInputValue(shares.toDoubleOrNull() ?: 0.0),
                             editValue = shares,
                             onValueChange = {
@@ -1447,10 +1546,14 @@ fun AddTransactionScreen(
                 }
             }
         }
-        LabeledOutlinedTextField(
-            label = "交易筆記",
+        Spacer(modifier = Modifier.height(16.dp))
+        OutlinedTextField(
             value = note,
-            onValueChange = { note = it }
+            onValueChange = { note = it },
+            label = { Text("交易筆記") },
+            minLines = 3,
+            maxLines = 6,
+            modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(32.dp))
         TransactionSubmitButtons(
@@ -1501,19 +1604,20 @@ fun AddTransactionScreen(
                             shortCoverLotId = if (transactionType == "買券還券") shortLotId else "",
                             shortCoverShares = if (transactionType == "買券還券") shares.toDoubleOrNull() ?: 0.0 else 0.0,
                             shortCompensationLotId = if (transactionType == "融券補償") shortLotId else "",
-                            shortCompensation = if (transactionType == "融券補償") shortCompensation.toDoubleOrNull() ?: 0.0 else 0.0
+                            shortCompensation = if (transactionType == "融券補償") shortCompensation.toDoubleOrNull() ?: 0.0 else 0.0,
+                            market = transactionMarket
                         )
                         if (validationError == TRANSACTION_SUBMISSION_IN_PROGRESS) {
                             keepSubmittingDisabled = true
                             return@launch
                         }
                         if (validationError != null) {
-                            Toast.makeText(context, validationError, Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, validationError.localized(), Toast.LENGTH_LONG).show()
                             return@launch
                         }
                         submissionSucceeded = true
                         val message = if (transactionId == null) "新增成功" else "更新成功"
-                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, message.localized(), Toast.LENGTH_SHORT).show()
                         if (addNext && transactionId == null) {
                             navController.navigate(
                                 Screen.AddTransaction.createRoute(
@@ -1540,41 +1644,46 @@ fun AddTransactionScreen(
             isNewTransaction = transactionId == null,
             isSubmitting = isSubmitting
         )
+        }
     }
 }
 
 @Composable
 private fun EditTransactionLoadingContent() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        CircularProgressIndicator()
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("載入交易資料中…")
+    Column(modifier = Modifier.fillMaxSize()) {
+        StockifyTopBar(title = "編輯交易")
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator()
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("載入交易資料中…")
+        }
     }
 }
 
 @Composable
 private fun EditTransactionMissingContent(onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("找不到這筆交易", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("這筆交易可能已被刪除，或已由還原作業取代。")
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onBack, shape = AddTransactionButtonShape) {
-            Text("返回")
+    Column(modifier = Modifier.fillMaxSize()) {
+        StockifyTopBar(title = "找不到交易", onBack = onBack)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("找不到這筆交易", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("這筆交易可能已被刪除，或已由還原作業取代。")
+            Spacer(modifier = Modifier.height(24.dp))
+            Button(onClick = onBack, shape = AddTransactionButtonShape) {
+                Text("返回")
+            }
         }
     }
 }
@@ -1643,16 +1752,17 @@ private fun formatStockDisplayLabel(stock: Stock?, stockCode: String, stockName:
 }
 
 private fun displayMarketLabel(market: String?): String {
-    return when (market?.trim()) {
+    return when (StockMarket.normalize(market)) {
         StockMarket.TW -> StockMarket.TW
         StockMarket.US -> StockMarket.US
+        StockMarket.CN -> StockMarket.CN
         else -> market.orEmpty()
     }
 }
 
 private fun formatFeeDisplayValue(fee: Double, market: String?): String {
     if (fee <= 0.0) return ""
-    return if (StockMarket.isUs(market.orEmpty())) {
+    return if (usesFractionalCurrency(market.orEmpty())) {
         String.format(Locale.US, "%.2f", fee)
     } else {
         fee.toInt().toString()
@@ -1661,7 +1771,7 @@ private fun formatFeeDisplayValue(fee: Double, market: String?): String {
 
 private fun formatTaxDisplayValue(tax: Double, market: String?): String {
     if (tax <= 0.0) return ""
-    return if (StockMarket.isUs(market.orEmpty())) {
+    return if (usesFractionalCurrency(market.orEmpty())) {
         String.format(Locale.US, "%.2f", tax)
     } else {
         tax.toInt().toString()
@@ -1670,7 +1780,7 @@ private fun formatTaxDisplayValue(tax: Double, market: String?): String {
 
 private fun formatEditableAmountValue(amount: Double, market: String?): String {
     if (amount <= 0.0) return ""
-    return if (StockMarket.isUs(market.orEmpty())) {
+    return if (usesFractionalCurrency(market.orEmpty())) {
         String.format(Locale.US, "%.2f", amount)
     } else {
         amount.toInt().toString()
@@ -1678,7 +1788,7 @@ private fun formatEditableAmountValue(amount: Double, market: String?): String {
 }
 
 private fun formatDividendAmountInput(amount: Double, market: String?): String {
-    return if (StockMarket.isUs(market.orEmpty())) {
+    return if (usesFractionalCurrency(market.orEmpty())) {
         String.format(Locale.US, "%.2f", amount)
     } else {
         amount.roundToInt().toString()
@@ -1708,17 +1818,15 @@ fun LabeledOutlinedTextField(
     readOnly: Boolean = false,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(text = label, style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            readOnly = readOnly,
-            keyboardOptions = keyboardOptions
-        )
-    }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier.fillMaxWidth(),
+        readOnly = readOnly,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = keyboardOptions
+    )
 }
 
 @Composable
@@ -1732,15 +1840,15 @@ fun LabeledOutlinedTextFieldStyled(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(text = label, style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
             readOnly = readOnly,
+            label = { Text(label) },
+            singleLine = true,
             keyboardOptions = keyboardOptions,
-            textStyle = textStyle     // ★ 控制字體
+            textStyle = textStyle
         )
     }
 }
@@ -1754,44 +1862,48 @@ fun ShareInputWithStepper(
     modifier: Modifier = Modifier,
     allowDecimal: Boolean = false
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        Text(text = label, style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { input ->
-                    onValueChange(filterShareInput(input, allowDecimal))
-                },
-                modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = if (allowDecimal) KeyboardType.Decimal else KeyboardType.Number
-                )
+    val current = value.toDoubleOrNull() ?: 0.0
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { input ->
+                onValueChange(filterShareInput(input, allowDecimal))
+            },
+            modifier = Modifier.weight(1f),
+            label = { Text(label) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = if (allowDecimal) KeyboardType.Decimal else KeyboardType.Number
             )
-            Spacer(modifier = Modifier.width(4.dp))
-            Button(
-                onClick = {
-                    val current = value.toDoubleOrNull() ?: 0.0
-                    onValueChange(formatShareInputValue(current + step))
-                },
-                shape = AddTransactionButtonShape
-            ) {
-                Text("+")
-            }
-            Spacer(modifier = Modifier.width(2.dp))
-            Button(
-                onClick = {
-                    val current = value.toDoubleOrNull() ?: 0.0
-                    val next = (current - step).coerceAtLeast(0.0)
-                    onValueChange(formatShareInputValue(next))
-                },
-                shape = AddTransactionButtonShape
-            ) {
-                Text("-")
-            }
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        OutlinedIconButton(
+            onClick = {
+                val next = (current - step).coerceAtLeast(0.0)
+                onValueChange(formatShareInputValue(next))
+            },
+            modifier = Modifier.size(48.dp),
+            enabled = current > 0.0
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Remove,
+                contentDescription = "減少".localized()
+            )
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        OutlinedIconButton(
+            onClick = {
+                onValueChange(formatShareInputValue(current + step))
+            },
+            modifier = Modifier.size(48.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Add,
+                contentDescription = "增加".localized()
+            )
         }
     }
 }
@@ -1822,41 +1934,42 @@ fun EditableTextStyled(
     keyboardType: KeyboardType = KeyboardType.Number
 ) {
     var editing by remember { mutableStateOf(false) }
-    var tempText by remember { mutableStateOf(value) }
+    var text by remember { mutableStateOf(editValue) }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
+    LaunchedEffect(value, editing) {
+        if (!editing) text = editValue
+    }
 
-        if (!editing) {
-            Text(
-                text = if (value.isBlank()) "-" else value,
-                style = style,
-                modifier = Modifier
-                    .padding(bottom = 12.dp)
-                    .clickable {
-                        tempText = editValue
-                        editing = true
+    OutlinedTextField(
+        value = if (editing) text else value.ifBlank { "-" },
+        onValueChange = { if (editing) text = it },
+        readOnly = !editing,
+        label = { Text(label) },
+        textStyle = style,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        trailingIcon = {
+            if (editing) {
+                TextButton(
+                    onClick = {
+                        onValueChange(text)
+                        editing = false
                     }
-            )
-        } else {
-            OutlinedTextField(
-                value = tempText,
-                onValueChange = { tempText = it },
-                textStyle = style,
-                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                trailingIcon = {
-                    Text(
-                        "完成",
-                        modifier = Modifier.clickable {
-                            onValueChange(tempText)
-                            editing = false
-                        }
+                ) {
+                    Text("完成")
+                }
+            } else {
+                IconButton(onClick = {
+                    text = editValue
+                    editing = true
+                }) {
+                    Icon(
+                        imageVector = Icons.Outlined.Edit,
+                        contentDescription = "修改$label".localized()
                     )
                 }
-            )
-        }
-    }
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    )
 }

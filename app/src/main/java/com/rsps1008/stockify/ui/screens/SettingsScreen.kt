@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,7 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
+import com.rsps1008.stockify.ui.text.AppLanguage
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,13 +55,16 @@ import com.rsps1008.stockify.data.ReturnRateMode
 import com.rsps1008.stockify.data.TextSizeMode
 import com.rsps1008.stockify.ui.viewmodel.SettingsViewModel
 import com.rsps1008.stockify.ui.viewmodel.ViewModelFactory
+import com.rsps1008.stockify.ui.text.Text
+import com.rsps1008.stockify.ui.text.localized
+import com.rsps1008.stockify.ui.components.StockifyTopBar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-internal val SettingsButtonShape: Shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+internal val SettingsButtonShape: Shape = androidx.compose.foundation.shape.RoundedCornerShape(percent = 50)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,11 +84,14 @@ fun SettingsScreen() {
     val message by viewModel.message.collectAsState()
     val lastUpdateTime by viewModel.lastStockListUpdateTime.collectAsState()
     val lastUsUpdateTime by viewModel.lastUsStockListUpdateTime.collectAsState()
+    val lastCnUpdateTime by viewModel.lastCnStockListUpdateTime.collectAsState()
     val updatingStockListMarket by viewModel.updatingStockListMarket.collectAsState()
 
     val feeDiscount by viewModel.feeDiscount.collectAsState()
     val minFeeRegular by viewModel.minFeeRegular.collectAsState()
     val minFeeOddLot by viewModel.minFeeOddLot.collectAsState()
+    val cnCommissionRate by viewModel.cnCommissionRate.collectAsState()
+    val cnMinimumCommission by viewModel.cnMinimumCommission.collectAsState()
     val dividendFee by viewModel.dividendFee.collectAsState()
     val preDeductSellFees by viewModel.preDeductSellFees.collectAsState()
     val partialSalesAsRealized by viewModel.partialSalesAsRealized.collectAsState()
@@ -118,29 +125,24 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     LaunchedEffect(message) {
         message?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            Toast.makeText(context, it.localized(), Toast.LENGTH_LONG).show()
             viewModel.onMessageShown()
         }
     }
 
-    // ===== 版面：上方固定 Logo，下面才捲動 =====
+    // ===== 版面：上方固定 TopAppBar，下面才捲動 =====
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        SampledResourceImage(
-            resId = R.drawable.stockify,
-            contentDescription = "Stockify Logo",
-            modifier = Modifier.fillMaxWidth(0.35f)
-        )
-        Spacer(modifier = Modifier.height(6.dp))
+        StockifyTopBar(title = "設定")
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp)
         ) {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -164,7 +166,7 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedTextField(
-                                value = themeOptions[theme] ?: theme,
+                                value = (themeOptions[theme] ?: theme).localized(),
                                 onValueChange = { },
                                 label = { Text("主題") },
                                 readOnly = true,
@@ -213,7 +215,7 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedTextField(
-                                value = textSizeOptions[textSizeMode] ?: TextSizeMode.label(textSizeMode),
+                                value = (textSizeOptions[textSizeMode] ?: TextSizeMode.label(textSizeMode)).localized(),
                                 onValueChange = { },
                                 label = { Text("文字大小") },
                                 readOnly = true,
@@ -249,15 +251,68 @@ fun SettingsScreen() {
 
                         Spacer(modifier = Modifier.height(16.dp))
 
+                        val languageOptions = remember {
+                            mapOf(
+                                AppLanguage.FOLLOW_SYSTEM to "跟隨系統",
+                                AppLanguage.SIMPLIFIED to "简体中文",
+                                AppLanguage.TRADITIONAL to "繁體中文"
+                            )
+                        }
+                        var languageTag by remember { mutableStateOf(AppLanguage.currentTag()) }
+                        var expandedLanguage by remember { mutableStateOf(false) }
+
+                        ExposedDropdownMenuBox(
+                            expanded = expandedLanguage,
+                            onExpandedChange = { expandedLanguage = !expandedLanguage },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = (languageOptions[languageTag] ?: "跟隨系統").localized(),
+                                onValueChange = { },
+                                label = { Text("語言") },
+                                readOnly = true,
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedLanguage)
+                                },
+                                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = expandedLanguage,
+                                onDismissRequest = { expandedLanguage = false },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                languageOptions.forEach { (tag, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            expandedLanguage = false
+                                            languageTag = tag
+                                            AppLanguage.apply(tag)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            "切換後整個 App 的文案會改用對應的中文用字，交易資料不受影響。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f, fill = false)) {
-                                Text("顯示台灣加權指數", style = MaterialTheme.typography.bodyLarge)
+                                Text("顯示大盤指數", style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    "於首頁顯示台灣加權摘要列",
+                                    "於首頁顯示目前市場的指數摘要列（台股加權或上證指數）",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -276,9 +331,9 @@ fun SettingsScreen() {
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f, fill = false)) {
-                                Text("顯示台股歷史資產圖表", style = MaterialTheme.typography.bodyLarge)
+                                Text("顯示歷史資產圖表", style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    "在首頁顯示整體台股的市值與報酬率歷史走勢圖",
+                                    "在首頁顯示持股市值與報酬率的歷史走勢圖",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -368,7 +423,7 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedTextField(
-                                value = returnRateModeOptions[returnRateMode] ?: "",
+                                value = (returnRateModeOptions[returnRateMode] ?: "").localized(),
                                 onValueChange = { },
                                 label = { Text("報酬率計算方式") },
                                 readOnly = true,
@@ -416,7 +471,7 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedTextField(
-                                value = roundingModeOptions[calculationRoundingMode] ?: "四捨五入",
+                                value = (roundingModeOptions[calculationRoundingMode] ?: "四捨五入").localized(),
                                 onValueChange = { },
                                 label = { Text("支出、收入、股息與配股計算") },
                                 readOnly = true,
@@ -537,7 +592,7 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedTextField(
-                                value = dataSourceOptions[stockDataSource] ?: stockDataSource,
+                                value = (dataSourceOptions[stockDataSource] ?: stockDataSource).localized(),
                                 onValueChange = { },
                                 label = { Text("台股即時資料來源") },
                                 readOnly = true,
@@ -577,7 +632,7 @@ fun SettingsScreen() {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             OutlinedTextField(
-                                value = usDataSourceOptions[usStockDataSource] ?: usStockDataSource,
+                                value = (usDataSourceOptions[usStockDataSource] ?: usStockDataSource).localized(),
                                 onValueChange = { },
                                 label = { Text("美股即時資料來源") },
                                 readOnly = true,
@@ -607,6 +662,23 @@ fun SettingsScreen() {
                         Text(
                             text = "*如果選擇的來源不可用，將自動採用另一個作為備用機制。",
                             style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        OutlinedTextField(
+                            value = "東方財富＋騰訊備援".localized(),
+                            onValueChange = { },
+                            label = { Text("A股即時資料來源") },
+                            readOnly = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                        )
+                        Text(
+                            text = "A股固定使用東方財富，批次與單檔都失敗時改用騰訊一次；歷史股價固定使用東方財富。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp)
                         )
 
@@ -734,6 +806,32 @@ fun SettingsScreen() {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     val usUpdateTimeText = lastUsUpdateTime?.let { "(更新時間: ${formatTimestamp(it)})" } ?: "(預設列表)"
                                     Text(text = usUpdateTimeText, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("A股股票列表", style = MaterialTheme.typography.titleMedium)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { viewModel.updateStockListFromCn() },
+                                            enabled = !isLoading,
+                                            shape = SettingsButtonShape
+                                        ) {
+                                            Text("更新A股股票列表")
+                                        }
+                                        if (updatingStockListMarket == "CN") CircularProgressIndicator()
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    val cnUpdateTimeText = lastCnUpdateTime?.let { "(更新時間: ${formatTimestamp(it)})" } ?: "(預設列表)"
+                                    Text(text = cnUpdateTimeText, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
@@ -890,6 +988,57 @@ fun SettingsScreen() {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
+                        Text("A股費稅設定", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "A 股手續費 = 成交金額 × 費率，最低 5 元人民幣；另有過戶費 0.001%（買賣皆收）與印花稅 0.05%（僅賣出）。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        var cnCommissionRateText by remember { mutableStateOf(formatFeeRate(cnCommissionRate)) }
+                        LaunchedEffect(cnCommissionRate) {
+                            if (cnCommissionRateText.toDoubleOrNull() != cnCommissionRate) {
+                                cnCommissionRateText = formatFeeRate(cnCommissionRate)
+                            }
+                        }
+                        OutlinedTextField(
+                            value = cnCommissionRateText,
+                            onValueChange = {
+                                cnCommissionRateText = it
+                                it.toDoubleOrNull()?.let { rate -> viewModel.setCnCommissionRate(rate) }
+                            },
+                            label = { Text("A股佣金費率 (例如 0.00025)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        var cnMinimumCommissionText by remember { mutableStateOf(formatFeeRate(cnMinimumCommission)) }
+                        LaunchedEffect(cnMinimumCommission) {
+                            if (cnMinimumCommissionText.toDoubleOrNull() != cnMinimumCommission) {
+                                cnMinimumCommissionText = formatFeeRate(cnMinimumCommission)
+                            }
+                        }
+                        OutlinedTextField(
+                            value = cnMinimumCommissionText,
+                            onValueChange = {
+                                cnMinimumCommissionText = it
+                                it.toDoubleOrNull()?.let { amount -> viewModel.setCnMinimumCommission(amount) }
+                            },
+                            label = { Text("A股最低佣金 (人民幣)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Text("隱私政策", style = MaterialTheme.typography.titleLarge)
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
@@ -943,4 +1092,10 @@ fun SettingsScreen() {
 private fun formatTimestamp(timestamp: Long): String {
     val sdf = SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.getDefault())
     return sdf.format(Date(timestamp))
+}
+
+/** Small fee rates must not render as scientific notation (0.00025, not 2.5E-4). */
+private fun formatFeeRate(value: Double): String {
+    if (!value.isFinite() || value == 0.0) return "0"
+    return java.math.BigDecimal(value.toString()).stripTrailingZeros().toPlainString()
 }

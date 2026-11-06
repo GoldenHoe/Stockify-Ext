@@ -7,8 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -16,7 +16,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -24,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.rsps1008.stockify.ui.text.Text
 
 internal const val UPDATE_HIGHLIGHTS_VERSION = "1.7.2"
 
@@ -70,12 +70,12 @@ fun UpdateHighlightsDialog(
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 UpdateHighlightCard(
-                    icon = Icons.Filled.Backup,
+                    icon = Icons.Outlined.Backup,
                     title = "離開 App 後自動備份",
                     description = "可設定每 1 天、3 天或 1 週嘗試備份，讓重要資料更方便保存。"
                 )
                 UpdateHighlightCard(
-                    icon = Icons.Filled.Restore,
+                    icon = Icons.Outlined.Restore,
                     title = "備份與還原更安心",
                     description = "覆蓋雲端資料前會先提醒；還原時可選擇要使用的備份。"
                 )

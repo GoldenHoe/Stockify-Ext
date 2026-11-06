@@ -7,7 +7,7 @@
 - 專案：原生 Android App「韭菜記帳本（Stockify）」；公開文案優先使用中文名 `韭菜記帳本`。
 - 技術：Kotlin、Jetpack Compose、Material 3、MVVM 風格分層。
 - SDK：最低 API 26，`compileSdk` / `targetSdk` 37。
-- 主要功能：台股／美股持股與交易管理、即時報價、損益與歷史圖表、配息配股、融資融券、CSV／PDF 匯入、本地與 Google Drive 備份。
+- 主要功能：台股／美股／A 股（滬深京）持股與交易管理、即時報價、損益與歷史圖表、配息配股、融資融券、CSV／PDF 匯入、本地與 Google Drive 備份。
 - 此專案不需要寫入 `E:\DailyDev.csv`。
 
 ## 2. 主要結構與資料原則
@@ -20,14 +20,14 @@
 - `TransactionListRepository` 在 Application scope 維護 Room observable query 的 `StateFlow` 快取；新增、編輯、刪除、匯入與清除仍須經 Room 自動同步。
 - 使用者偏好與輕量快取集中在 `SettingsDataStore`。若新增或修改設定，需一起檢查 DataStore、ViewModel、畫面、預設值與舊版相容性。
 - App 鎖定使用 4–8 位數字密碼，DataStore 只保存隨機 salt 與 PBKDF2 雜湊，不可保存明文；冷啟動及離開 App 後重新上鎖。生物辨識僅作快速解鎖，數字密碼必須保留為備援。
-- `Stock.market` 使用穩定代碼 `TW` / `US`；`Stock.exchange` 僅表示台股上市、上櫃、興櫃。所有查詢、cache key、排序與批次識別都要保留市場／股票／帳戶邊界。
+- `Stock.market` 使用穩定代碼 `TW` / `US` / `CN`；`Stock.exchange` 表示台股上市、上櫃、興櫃與 A 股滬市、深市、北交所。所有查詢、cache key、排序與批次識別都要保留市場／股票／帳戶邊界。CN 不可由代號推斷（六位數字同時可能是台股 ETF），必須由呼叫端明確指定。
 - 導航參數必須使用 `Screen.*.createRoute()` 或 `Uri.encode()`，避免美股 ticker 或保留字元造成 route 解析失敗。
 
 ## 3. 即時資料與股票清單
 
-- 即時輪詢核心在 `RealtimeStockDataService`：啟動時無視開盤狀態強制抓一次；之後台股與美股依各自時區、交易時段與來源分流。
-- 盤中刷新對齊下一個整數 interval 秒點；兩個市場都休市時每 30 秒重新檢查。手動刷新、匯入後刷新可繞過開盤門檻。
-- 每個市場只嘗試「主來源 + 一次 fallback」，不可在來源間循環。台股為 TWSE / Yahoo，美股為 Nasdaq / Yahoo；Nasdaq 的 ETF 使用 `assetclass=etf`。
+- 即時輪詢核心在 `RealtimeStockDataService`：啟動時無視開盤狀態強制抓一次；之後台股、美股與 A 股依各自時區、交易時段與來源分流。A 股時段為 Asia/Shanghai 09:30–11:30、13:00–15:00，僅在週一至週五且非國定假日開盤；假日依 `CnMarketCalendar` 內依國務院公告建立的靜態清單判斷（週末補班日不開盤），沒有該年度清單時只排除週末。
+- 盤中刷新對齊下一個整數 interval 秒點；全部市場都休市時每 30 秒重新檢查。手動刷新、匯入後刷新可繞過開盤門檻。
+- 每個市場只嘗試「主來源 + 一次 fallback」，不可在來源間循環。台股為 TWSE / Yahoo，美股為 Nasdaq / Yahoo；Nasdaq 的 ETF 使用 `assetclass=etf`。A 股主來源為東方財富（批次缺檔時以單檔查詢補齊，單檔回應另帶 `f51`／`f52` 漲跌停價），批次與單檔都失敗時才改用騰訊（Tencent）一次。
 - 抓取器單次最多 3 條並發，暫時性網路錯誤短 retry 一次。保留 `CancellationException`；其他來源錯誤應轉為單一來源失敗，不能讓背景或前景 coroutine 崩潰。
 - JSON 必須安全檢查型別與 null；數值不可直接強制 cast。TLS 憑證錯誤可觸發既有 fallback，但不可使用 trust-all 或弱化憑證驗證。
 - 報價每批／每檔成功即合併至 StateFlow，不等待整輪或缺檔 fallback；批次、各市場與 fallback 共用最多 3 條並發，失敗保留原價。報價持久化仍以整輪計數，避免逐筆寫入 DataStore。
@@ -35,8 +35,9 @@
 - Yahoo 價格解析前需移除千分位逗號。TWSE 上市／上櫃每批最多 5 檔；興櫃即時價只走 Yahoo，歷史價走 TPEx 月資料。
 - `Ktor` 版本只由 `gradle/libs.versions.toml` 管理，不可在 module 另寫不同版本。
 - 台股與美股清單啟動時若距上次成功更新超過 7 天才同步；失敗或空清單保留原資料。台股同步 TWSE，上市、上櫃、興櫃任一板別取得失敗或解析為空時取消整次更新，不寫入資料庫或更新成功時間；美股直接抓取 Nasdaq Trader 的 `nasdaqlisted.txt` 與 `otherlisted.txt`，過濾測試商品與檔尾 `File Creation Time` 記錄後，只重建 `market = US`。
-- Bundled `stocks.json` / `us_stocks.json` 依 checksum 同步 seed；台股已有手動更新紀錄時不可用 seed 覆蓋。`stocks.json` 損壞可刪除後由 asset 重建。
-- USD/TWD 匯率啟動時抓取一次，之後每 24 小時更新並保留最後可用快取；首頁與個股共用同一份匯率。
+- Bundled `stocks.json` / `us_stocks.json` / `cn_stocks.json` 依 checksum 同步 seed；台股已有手動更新紀錄時不可用 seed 覆蓋。`stocks.json` 損壞可刪除後由 asset 重建。A 股清單由東方財富 `clist` 分頁取得（`data.total` 為終止條件），asset 內 `market` 欄位存交易所（滬市／深市／北交所）。搜尋維持本機優先：只有本機查無任何 A 股結果時才呼叫東方財富 suggest，且只收 `Classify=AStock`，名稱存繁體。
+- 首頁 A 股模式顯示上證指數、深證成指、創業板指摘要列（`CnMarketIndexService`，東方向 `ulist.np` 取 `f2/f3/f4` ÷100），與台灣加權同一個刷新排程並快取；台灣加權只在台股／合併模式顯示。
+- USD/TWD 與 CNY/TWD 匯率啟動時抓取一次，之後每 24 小時更新並保留最後可用快取；首頁與個股共用同一份匯率。
 
 ## 4. 交易、融資融券與損益
 
@@ -44,7 +45,10 @@
 
 - 交易依 `date`、`recordTime`、`id` 穩定排序；日期以裝置時區當日起點保存，DatePicker 的 UTC 值要轉回相同本地日期。新增驗證須配置晚於同範圍既有資料的暫定 ID。
 - 新增、編輯、刪除與匯入都要重播完整交易時序後才寫入；不得只驗證單筆。編輯若移動帳戶，來源與目的帳戶都要驗證。
-- 驗證完成前不可先新增股票主檔、刪除舊資料或部分匯入。數字必須有限；股號 trim 後不可空白；帳戶 ID 必須大於 0；市場僅能為 `TW` / `US` 且須與代號一致。
+- 驗證完成前不可先新增股票主檔、刪除舊資料或部分匯入。數字必須有限；股號 trim 後不可空白；帳戶 ID 必須大於 0；市場僅能為 `TW` / `US` / `CN` 且須與代號一致。
+- A 股以 100 股為 1 手，股數步進為 100。佣金預設 0.025%（最低 ¥5）、過戶費 0.001%（買賣皆收）、印花稅 0.05%（僅賣出，記入交易稅）；不得套用台股證交稅或台股最低手續費，費率可在設定調整。
+- A 股 T+1：賣出股數不得超過前一交易日已結算的同股票、同帳戶持股；漲跌幅提示依板別為 ±10%／±20%（300、301、688）／±30%（4xx、8xx、920），ST 名稱 ±5%，僅提示不阻擋。漲跌停價優先採用報價帶回的 `f51`／`f52`（單檔查詢與騰訊才有），沒有時才以板別比例計算並四捨五入至分；提示同時顯示漲停與跌停價。融資融券只限台股。
+- A 股配息由東方財富 `RPT_SHAREBONUS_DET` 取得，`PRETAX_BONUS_RMB`／`BONUS_IT_RATIO` 是「每 10 股」數值，須除以 10 才是每股股利；配息快取以市場為邊界（CN 股票代號加上 `CN:` 前綴），六位數字不可跨市場共用快取。
 - 分割比例必須大於 0；減資比例必須大於 0 且小於 100。公司行動只影響同股票、同帳戶，並從事件日依原始交易順序生效。
 - 即時持股、損益與 XIRR 必須排除估值日之後的交易。
 - 配息計算優先讀 `dividendIncome`，舊資料才 fallback `income`；共用規則集中在 `HoldingCalculationSupport`，不要讓首頁、個股與歷史圖各自解讀。
@@ -60,7 +64,8 @@
 - 融資自備款必須另存「是否手動覆寫」，手動輸入 0 也算覆寫；清空才恢復 `支出 - 融資本金` 自動值。預設利率只帶入新建或改類型後的空白欄位，不回寫既有批次。
 - 融資還款允許本金 0、利息大於 0；兩者不可為負，本金不可超過未償本金。`expense` 包含還款本金與實際利息。
 - 融券本金固定為賣出價 × 賣出股數；買券還券股數不可超過剩餘股數，且買進股數等於還券股數。分割／減資要同步調整原始與未還股數；權益補償只記現金，不視為還券。
-- 未平倉融券與未清融資本金／未付應計利息即使多頭股數為 0 仍屬未實現部位。當日損益使用 `(多頭股數 - 未還券股數) × 漲跌`。
+- 未平倉融券與未清融資本金／未付應計利息即使多頭股數為 0 仍屬未實現部位。當日損益以昨收為基準，但**當天買進的股數改用實際買進成本（含手續費）**：`漲跌 × (多頭股數 - 未還券股數) + Σ(昨收 - 當天買進每股成本) × 當天買進股數`，避免當天新建倉出現「當日獲利、累積虧損」的矛盾數字。當日損益由 `HoldingInfo.dailyPL` 統一提供，首頁與個股頁共用。
+- 損益類數值顯示要保留正負號（正值加「+」），不得以 `abs()` 搭配顏色表達方向；數值為 0 時使用中性色（`onSurfaceVariant`），不可套用漲跌色。
 - 融券報酬率要區分未平倉本金與歷來本金；XIRR 採投入資本觀點，納入開倉本金、回補、本金返還、已實現損益、借券費、補償金及終值負債。
 
 ### 4.3 報酬率與歷史圖表
@@ -70,8 +75,8 @@
 - 「損益與報酬排除股息收入」預設關閉；開啟後實領現金股息不納入即時與歷史損益、成本報酬率及 XIRR，但股息收入摘要、交易紀錄與股票配股股數仍維持原資料。
 - XIRR 必須使用交易現金流與估值日終值，不可 fallback 成靜態報酬率；密集計算放在 `Dispatchers.Default`，可沿用前一日期結果作 Newton initial guess。
 - 即時持股的交易分組與排序只在交易變動時重建；逐檔計算快取須涵蓋市場、交易／帳戶、報價、費率、估值時間與所有損益模式，任何計算輸入變動都須失效。
-- 個股維持原始幣別；首頁合併模式將美股市值、損益與現金流依 USD/TWD 換成台幣後再彙總。純美股模式維持美元。
-- 歷史截止日依市場當地收盤決定：台北 13:30、紐約 16:00 後才納入今天；首頁手動刷新報價也須重抓目前區間圖表。
+- 個股維持原始幣別；首頁合併模式將美股市值、損益與現金流依 USD/TWD、A 股依 CNY/TWD 換成台幣後再彙總。純美股模式維持美元、純 A 股模式維持人民幣。
+- 歷史截止日依市場當地收盤決定：台北 13:30、紐約 16:00、上海／深圳 15:00 後才納入今天；首頁手動刷新報價也須重抓目前區間圖表。
 - 歷史圖表逐日回放原始交易，不可先用最終分割倍率回推全部歷史。缺少有效歷史價的股票／日期要跳過，不能以價格 0 累加。
 - 報酬日曆必須由首頁已回放完成的 `PersonalHistoryPoint` 衍生，不可再次下載歷史價格或重播交易。每日損益為相鄰點 `totalPL` 差額；每日報酬以先前交易日 `marketValue` 為基準（無有效基準時為 0）；月損益以月首前一有效點至月底的累積損益差計算，月報酬使用每日報酬複利。這會自然沿用配息排除、公司行動、融資融券、匯率與市場休市處理。
 - 切換 1M／6M／1Y 時立即進入 Loading，直到回傳 range 與涵蓋範圍符合目標；載入畫面使用 indeterminate indicator，保留 ViewModel 的狀態文案。
@@ -95,11 +100,16 @@
 ## 6. UI 與導航契約
 
 - 維持既有 Material 3 結構，優先小而精準的調整；區分外層 margin 與元件內 padding，不要順手重排附近版面。
+- 所有 Compose 文案以 `com.rsps1008.stockify.ui.text.Text` 顯示；動態訊息、Toast、無障礙與對話框文字用 `String.localized()`。儲存值、Room 欄位名、CSV 與備份仍為繁體，簡繁轉換只發生在顯示層，不可改寫既有資料；搜尋比對需同時接受簡繁兩種輸入。
+- 簡繁轉換必須做「用語對照」而非逐字直譯：ChineseTextConverter 的短語表要涵蓋大陸用語（例如 專案→项目、匯入／匯出→导入／导出、裝置→设备、透過→通过、檔案→文件、重新整理→刷新、網際網路→互联网、雜湊→哈希）；新增台灣用語時同時補對照與單元測試，短語一律依長度由長到短套用。
+- 語言提供跟隨系統／简体中文／繁體中文，採 AppCompat per-app locale；`values-zh-rTW`、`drawable-zh-rTW`、`drawable-zh-rTW-night` 保留繁體資源，其餘資源為簡體。
+- 形狀、字階與顏色一律取自 `StockifyShapes`、`Typography` 與 `MaterialTheme.colorScheme`，不要硬編圓角或色值；新增元件沿用同一組 token。
 - 底部分頁 header 維持一致外層 `16.dp` padding 與 `6.dp` 標題間距。文字大小由 `StockifyTheme` 的 `LocalDensity.fontScale` 全域套用。
-- `MainActivity` 外層 `Scaffold` 使用 `contentWindowInsets = WindowInsets(0, 0, 0, 0)`；BottomAppBar 吸收導覽列 inset。無 TopAppBar 主頁套 `statusBarsPadding()`，次頁由 TopAppBar 吸收狀態列，避免重複 inset。
-- NavGraph 套用外層 padding 後須消耗對應 inset，並處理水平 safeDrawing 安全區；隱藏 BottomAppBar 的交易表單須自行處理 navigation bar 與 IME inset，鎖定頁須處理四邊 safeDrawing 安全區。
-- 底部五個 top-level tab 使用 NavHost 預設 transition；切換時清除 detail back stack，不用 `restoreState` 回到明細頁。
-- 首頁三種市場模式為台股、美股、合併；個股卡與詳情維持原幣，合併總計換算台幣。
+- 每個畫面都以 `ui/components/StockifyTopBar` 標明頁面功能：首頁用 `StockifyBrandTopBar`（品牌字標＋功能副標），其餘頁面標題為功能名稱，次頁帶返回與該頁專屬動作；TopAppBar 自行吸收狀態列 inset，畫面內層不可再套 `statusBarsPadding()`。無障礙文案使用「返回／重新整理／刪除／編輯」等中文。
+- `MainActivity` 外層 `Scaffold` 使用 `contentWindowInsets = WindowInsets(0, 0, 0, 0)`；底部使用標準 `NavigationBar` + `NavigationBarItem`（四個 top-level tab，圖示使用 Material Icons 向量，不再新增自訂 drawable），新增交易使用 Scaffold 的 `floatingActionButton` 插槽，導覽列 inset 由 `NavigationBar` 吸收。
+- NavGraph 套用外層 padding 後須消耗對應 inset，並處理水平 safeDrawing 安全區；隱藏導覽列的頁面（交易表單、鎖定頁）須自行處理 navigation bar 與 IME inset。
+- 底部四個 top-level tab 使用 NavHost 預設 transition；切換時清除 detail back stack，不用 `restoreState` 回到明細頁。
+- 首頁摘要卡下方以三個 `FilterChip`（台股／美股／A 股）切換市場；`COMBINED` 僅保留給既有設定（三個 Chip 同時顯示為選取），不再提供獨立切換入口。個股卡與詳情維持原幣，合併總計換算台幣。
 - 未實現與已實現清單排序 key 使用 `market:code`，分別保存。表頭排序有三態並記憶最後狀態；只有無表頭排序時允許長按拖曳。
 - 持股卡股價漲跌文字必須單行自適應，不可換行。Edge-to-edge、AMOLED 純黑與動態文字縮放修改後需檢查所有 top-level 與 detail 畫面。
 - 資產圓餅圖個別標的需顯示代號與名稱；點擊切片或圖例同步選取。貸款固定紅色，其他標的使用不重複的柔和定性色盤；中央名稱單行自動縮小。

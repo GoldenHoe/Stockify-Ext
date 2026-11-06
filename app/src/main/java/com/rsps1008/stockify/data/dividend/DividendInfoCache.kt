@@ -10,7 +10,10 @@ data class YahooDividendCacheEntry(
     val stockDividendDate: String? = null,
     val lastFetchedDate: String? = null,
     val lastFetchedTimeMillis: Long? = null,
-    val requestSequence: Long? = null
+    val requestSequence: Long? = null,
+    // A-share plans also carry the equity record date and the plan progress text.
+    val recordDate: String? = null,
+    val planProgress: String? = null
 )
 
 typealias DividendInfoCacheEntry = YahooDividendCacheEntry

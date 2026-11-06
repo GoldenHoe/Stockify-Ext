@@ -41,6 +41,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import com.rsps1008.stockify.data.StockMarket
+import com.rsps1008.stockify.ui.text.localized
 
 internal fun mergeRealtimeStockInfoMaps(
     current: Map<String, RealtimeStockInfo>,
@@ -88,6 +89,7 @@ class RealtimeStockDataService(
     private val stockDao: StockDao,
     private val settingsDataStore: SettingsDataStore,
     private val taiwanWeightedIndexService: TaiwanWeightedIndexService,
+    private val cnMarketIndexService: CnMarketIndexService,
     private val applicationContext: Context,
 ) {
     private val _realtimeStockInfo = MutableStateFlow<Map<String, RealtimeStockInfo>>(emptyMap())
@@ -118,6 +120,8 @@ class RealtimeStockDataService(
     private val yahooFetcher = YahooStockInfoFetcher()
     private val usYahooFetcher = UsYahooStockInfoFetcher()
     private val usNasdaqFetcher = NasdaqStockInfoFetcher()
+    private val cnEastmoneyFetcher = CnStockInfoFetcher()
+    private val cnTencentFetcher = CnTencentStockInfoFetcher()
     private val preferredStockDataSource = MutableStateFlow("TWSE")
     private val preferredUsStockDataSource = MutableStateFlow("Nasdaq")
 
@@ -209,7 +213,7 @@ class RealtimeStockDataService(
     }
 
     private fun isAnyMarketOpen(): Boolean {
-        return twseFetcher.isMarketOpen() || usNasdaqFetcher.isMarketOpen()
+        return twseFetcher.isMarketOpen() || usNasdaqFetcher.isMarketOpen() || cnEastmoneyFetcher.isMarketOpen()
     }
 
     fun startFetching() {
@@ -286,6 +290,14 @@ class RealtimeStockDataService(
             } catch (e: Exception) {
                 Log.e("RealtimeStockDataService", "Taiwan weighted index refresh failed", e)
             }
+
+            try {
+                refreshCnMarketIndexes(refreshRegardlessOfMarketOpen = refreshRegardlessOfMarketOpen)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("RealtimeStockDataService", "CN market index refresh failed", e)
+            }
         }
     }
 
@@ -333,7 +345,7 @@ class RealtimeStockDataService(
                 }
 
                 Handler(Looper.getMainLooper()).post {
-                    Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(applicationContext, message.localized(), Toast.LENGTH_SHORT).show()
                 }
 
                 hasNotifiedAboutFallback = true
@@ -405,8 +417,48 @@ class RealtimeStockDataService(
                     StockExchange.normalize(stock.exchange), stock.stockType)
             },
             fetchTaiwanFallback = { stock -> fetchWithFetcher(yahooFetcher, stock.code, stock.stockType) },
+            fetchCnBatch = { batch -> fetchCnBatchSafely(batch) },
+            fetchCnFallback = { stock -> fetchCnWithFallback(stock) },
             publish = { updates -> mergeRealtimeStockInfo(updates) }
         )
+
+    /**
+     * CN keeps one primary source (Eastmoney: batch first, per-symbol fill) and one
+     * fallback (Tencent), only reached when both Eastmoney calls return nothing.
+     */
+    private suspend fun fetchCnWithFallback(stock: Stock): QuoteFetchOutcome {
+        val primary = fetchWithFetcher(cnEastmoneyFetcher, stock.code, stock.stockType)
+        if (primary.info != null) return primary
+        Log.d(
+            "RealtimeStockDataService",
+            "Eastmoney returned no quote for CN ${stock.code}; trying Tencent once"
+        )
+        val fallback = fetchWithFetcher(cnTencentFetcher, stock.code, stock.stockType)
+        return fallback.copy(
+            fallbackUsed = true,
+            certificateFailure = fallback.certificateFailure || primary.certificateFailure
+        )
+    }
+
+    private suspend fun fetchCnBatchSafely(stocks: List<Stock>): QuoteBatchOutcome {        return try {
+            QuoteBatchOutcome(
+                infos = cnEastmoneyFetcher.fetchStockInfoList(stocks.map { it.code }),
+                certificateFailure = false
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: CertificateValidationException) {
+            Log.e(
+                "RealtimeStockDataService",
+                "CN batch certificate validation failed; falling back per stock",
+                e
+            )
+            QuoteBatchOutcome(emptyMap(), certificateFailure = true)
+        } catch (e: Exception) {
+            Log.e("RealtimeStockDataService", "CN batch failed; falling back per stock", e)
+            QuoteBatchOutcome(emptyMap(), certificateFailure = false)
+        }
+    }
 
     private suspend fun fetchTwseBatchSafely(stocks: List<Stock>): QuoteBatchOutcome {
         return try {
@@ -528,6 +580,19 @@ class RealtimeStockDataService(
                 secondaryFetcher = secondaryFetcher,
                 stockType = stockType
             )
+        } else if (StockMarket.isCn(market)) {
+            // Eastmoney's per-symbol endpoint fills CN batches; Tencent is the single fallback.
+            Log.d("RealtimeStockDataService", "Refreshing CN $stockCode using Eastmoney single quote")
+            val primary = fetchWithFetcher(cnEastmoneyFetcher, stockCode, stockType)
+            if (primary.info != null) {
+                primary
+            } else {
+                val fallback = fetchWithFetcher(cnTencentFetcher, stockCode, stockType)
+                fallback.copy(
+                    fallbackUsed = true,
+                    certificateFailure = fallback.certificateFailure || primary.certificateFailure
+                )
+            }
         } else if (StockExchange.isEmerging(exchange)) {
             Log.d("RealtimeStockDataService", "Refreshing $stockCode as emerging stock using Yahoo only")
             fetchWithFetcher(yahooFetcher, stockCode, stockType)
@@ -565,6 +630,7 @@ class RealtimeStockDataService(
     private suspend fun shouldRefreshMarket(market: String): Boolean {
         return when (StockMarket.normalize(market)) {
             StockMarket.US -> usNasdaqFetcher.isMarketOpen()
+            StockMarket.CN -> cnEastmoneyFetcher.isMarketOpen()
             else -> isTaiwanMarketOpen()
         }
     }
@@ -597,6 +663,18 @@ class RealtimeStockDataService(
         }
 
         taiwanWeightedIndexService.refreshOnce(preferredStockDataSource.value)
+    }
+
+    private suspend fun refreshCnMarketIndexes(refreshRegardlessOfMarketOpen: Boolean = false) {
+        if (!refreshRegardlessOfMarketOpen && !cnEastmoneyFetcher.isMarketOpen()) {
+            Log.d(
+                "RealtimeStockDataService",
+                "Skipping CN market index refresh because the Shanghai market is closed"
+            )
+            return
+        }
+
+        cnMarketIndexService.refreshOnce()
     }
 
     private fun delayUntilNextAlignedFetch(intervalSeconds: Int): Long {
@@ -727,7 +805,7 @@ class RealtimeStockDataService(
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(
                 applicationContext,
-                "抓取報價憑證失效",
+                "抓取報價憑證失效".localized(),
                 Toast.LENGTH_SHORT
             ).show()
         }

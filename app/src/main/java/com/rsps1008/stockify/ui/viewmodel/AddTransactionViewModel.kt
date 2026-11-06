@@ -17,7 +17,13 @@ import com.rsps1008.stockify.data.AccountFeeSettings
 import com.rsps1008.stockify.data.effectiveFeeSettings
 import com.rsps1008.stockify.data.TransactionCostSupport
 import com.rsps1008.stockify.data.TransactionValidationSupport
+import com.rsps1008.stockify.data.CnTradingRules
+import com.rsps1008.stockify.data.CnStockSuggestService
+import com.rsps1008.stockify.data.StockExchange
+import com.rsps1008.stockify.data.dividend.CnDividendRepository
+import com.rsps1008.stockify.data.dividend.DividendResult
 import com.rsps1008.stockify.data.dividend.YahooDividendRepository
+import com.rsps1008.stockify.ui.text.ChineseTextConverter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -177,7 +183,9 @@ class AddTransactionViewModel(
     private val settingsDataStore: SettingsDataStore,
     private val transactionId: Int?,
     private val realtimeStockDataService: RealtimeStockDataService,
-    private val dividendRepository: YahooDividendRepository
+    private val dividendRepository: YahooDividendRepository,
+    private val cnDividendRepository: CnDividendRepository,
+    private val cnStockSuggestService: CnStockSuggestService
 ) : ViewModel() {
     val taxRateNormalListedStock: StateFlow<Double> =
         settingsDataStore.taxRateNormalListedStockFlow
@@ -369,7 +377,7 @@ class AddTransactionViewModel(
     ) {
         viewModelScope.launch {
             try {
-                val result = dividendRepository.fetchLatestCashDividend(canonicalStockCode(stockCode))
+                val result = fetchLatestCashDividend(canonicalStockCode(stockCode), market)
                 if (accountId != _selectedAccountId.value) return@launch
                 if (result == null) {
                     onFail()
@@ -410,7 +418,7 @@ class AddTransactionViewModel(
     ) {
         viewModelScope.launch {
             try {
-                val result = dividendRepository.fetchLatestStockDividend(canonicalStockCode(stockCode))
+                val result = fetchLatestStockDividend(canonicalStockCode(stockCode), market)
                 if (accountId != _selectedAccountId.value) return@launch
                 if (result == null) {
                     onFail()
@@ -461,6 +469,21 @@ class AddTransactionViewModel(
 
     private fun String.toTransactionDateMillis(): Long? = dividendDateToTransactionDateMillis(this)
 
+    /** TW dividends come from Yahoo; A-shares come from Eastmoney's share bonus dataset. */
+    private suspend fun fetchLatestCashDividend(stockCode: String, market: String): DividendResult? =
+        if (StockMarket.isCn(market)) {
+            cnDividendRepository.fetchLatestCashDividend(stockCode)
+        } else {
+            dividendRepository.fetchLatestCashDividend(stockCode)
+        }
+
+    private suspend fun fetchLatestStockDividend(stockCode: String, market: String): DividendResult? =
+        if (StockMarket.isCn(market)) {
+            cnDividendRepository.fetchLatestStockDividend(stockCode)
+        } else {
+            dividendRepository.fetchLatestStockDividend(stockCode)
+        }
+
 
     private val stockSearchQuery = MutableStateFlow("")
 
@@ -472,11 +495,38 @@ class AddTransactionViewModel(
             if (query.isBlank()) {
                 flowOf(emptyList())
             } else {
-                stockDao.searchStocks(
-                    query = query,
-                    likeQuery = escapeStockSearchLikePattern(query),
-                    limit = 5
-                )
+                // Stock names are stored in Traditional Chinese; a Simplified query
+                // has to be searched in both forms so either input script matches.
+                val traditionalQuery = ChineseTextConverter.toTraditional(query)
+                val localResults = if (traditionalQuery == query) {
+                    stockDao.searchStocks(
+                        query = query,
+                        likeQuery = escapeStockSearchLikePattern(query),
+                        limit = 5
+                    )
+                } else {
+                    combine(
+                        stockDao.searchStocks(
+                            query = query,
+                            likeQuery = escapeStockSearchLikePattern(query),
+                            limit = 5
+                        ),
+                        stockDao.searchStocks(
+                            query = traditionalQuery,
+                            likeQuery = escapeStockSearchLikePattern(traditionalQuery),
+                            limit = 5
+                        )
+                    ) { directMatches, traditionalMatches ->
+                        (directMatches + traditionalMatches)
+                            .distinctBy { it.market to it.code }
+                            .take(5)
+                    }
+                }
+                // The bundled A-share list can go stale, so an A-share search with no
+                // local hit asks Eastmoney. Local rows always keep their order.
+                localResults.map { matches ->
+                    mergeWithCnSuggestions(matches, query)
+                }
             }
         }
         .stateIn(
@@ -484,6 +534,15 @@ class AddTransactionViewModel(
             started = SharingStarted.WhileSubscribed(5000L),
             initialValue = emptyList()
         )
+
+    private suspend fun mergeWithCnSuggestions(localMatches: List<Stock>, query: String): List<Stock> {
+        if (localMatches.any { StockMarket.isCn(it.market) }) return localMatches
+        val suggestions = cnStockSuggestService.suggest(query, limit = 5)
+        if (suggestions.isEmpty()) return localMatches
+        return (localMatches + suggestions)
+            .distinctBy { StockMarket.normalize(it.market) to it.code }
+            .take(5)
+    }
 
     fun updateStockSearchQuery(query: String) {
         stockSearchQuery.value = query
@@ -510,6 +569,17 @@ class AddTransactionViewModel(
         Triple(settings.feeDiscount, settings.minFeeRegular, settings.minFeeOddLot)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), Triple(0.28, 1, 1))
 
+    private val cnFeeSettings = combine(
+        settingsDataStore.cnCommissionRateFlow,
+        settingsDataStore.cnMinimumCommissionFlow
+    ) { commissionRate, minimumCommission ->
+        CnTradingRules.FeeSettings(commissionRate, minimumCommission)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000L),
+        CnTradingRules.FeeSettings()
+    )
+
     fun calculateBuyCosts(price: Double, shares: Double, market: String = StockMarket.TW) {
         if (price <= 0 || shares <= 0) {
             return
@@ -519,6 +589,15 @@ class AddTransactionViewModel(
             _taxRate.value = 0.0
             _tax.value = 0.0
             _expense.value = roundCalculatedCurrency(price * shares + _fee.value, market)
+            return
+        }
+
+        if (StockMarket.isCn(market)) {
+            val transactionValue = price * shares
+            _fee.value = CnTradingRules.buyFee(transactionValue, cnFeeSettings.value)
+            _taxRate.value = 0.0
+            _tax.value = 0.0
+            _expense.value = roundCalculatedCurrency(transactionValue + _fee.value, market)
             return
         }
 
@@ -551,6 +630,15 @@ class AddTransactionViewModel(
             _taxRate.value = 0.0
             _tax.value = 0.0
             _income.value = roundCalculatedCurrency(price * shares - _fee.value, market)
+            return
+        }
+
+        if (StockMarket.isCn(market)) {
+            val transactionValue = price * shares
+            _fee.value = CnTradingRules.sellFee(transactionValue, cnFeeSettings.value)
+            _taxRate.value = CnTradingRules.STAMP_DUTY_RATE
+            _tax.value = CnTradingRules.stampDuty(transactionValue)
+            _income.value = roundCalculatedCurrency(transactionValue - _fee.value - _tax.value, market)
             return
         }
 
@@ -616,7 +704,8 @@ class AddTransactionViewModel(
         shortCoverLotId: String = "",
         shortCoverShares: Double = 0.0,
         shortCompensationLotId: String = "",
-        shortCompensation: Double = 0.0
+        shortCompensation: Double = 0.0,
+        market: String? = null
     ): String? {
         if (!submissionMutex.tryLock()) {
             return TRANSACTION_SUBMISSION_IN_PROGRESS
@@ -647,6 +736,7 @@ class AddTransactionViewModel(
         val finalShares = if (type == "配股") 0.0 else shares
         val finalDividendShares = if (type == "配股") shares else 0.0
         val finalDividendIncome = if (type == "配息") finalIncome else 0.0
+        val resolvedMarket = StockMarket.normalize(market ?: StockMarket.inferFromCode(stockCode))
 
         return if (transactionId == null) {
             addTransaction(
@@ -658,7 +748,8 @@ class AddTransactionViewModel(
                 note, finalDividendIncome, finalSupplementaryHealthInsurancePremium, capitalReductionRatio,
                 sharesBeforeReduction, sharesAfterReduction, cashReturned,
                 stockSplitRatio, sharesBeforeSplit, sharesAfterSplit,
-                marginPrincipal, marginAnnualRate, marginLotId, marginRepaymentLotId, marginRepayment, marginSelfFunded, marginSelfFundedOverridden, marginActualInterest, shortBorrowPrincipal, shortBorrowAnnualRate, shortLotId, shortCoverLotId, shortCoverShares, shortCompensationLotId, shortCompensation
+                marginPrincipal, marginAnnualRate, marginLotId, marginRepaymentLotId, marginRepayment, marginSelfFunded, marginSelfFundedOverridden, marginActualInterest, shortBorrowPrincipal, shortBorrowAnnualRate, shortLotId, shortCoverLotId, shortCoverShares, shortCompensationLotId, shortCompensation,
+                resolvedMarket
             )
         } else {
             updateTransaction(
@@ -670,7 +761,8 @@ class AddTransactionViewModel(
                 note, finalDividendIncome, finalSupplementaryHealthInsurancePremium, capitalReductionRatio,
                 sharesBeforeReduction, sharesAfterReduction, cashReturned,
                 stockSplitRatio, sharesBeforeSplit, sharesAfterSplit,
-                marginPrincipal, marginAnnualRate, marginLotId, marginRepaymentLotId, marginRepayment, marginSelfFunded, marginSelfFundedOverridden, marginActualInterest, shortBorrowPrincipal, shortBorrowAnnualRate, shortLotId, shortCoverLotId, shortCoverShares, shortCompensationLotId, shortCompensation
+                marginPrincipal, marginAnnualRate, marginLotId, marginRepaymentLotId, marginRepayment, marginSelfFunded, marginSelfFundedOverridden, marginActualInterest, shortBorrowPrincipal, shortBorrowAnnualRate, shortLotId, shortCoverLotId, shortCoverShares, shortCompensationLotId, shortCompensation,
+                resolvedMarket
             )
         }
         } finally {
@@ -708,16 +800,24 @@ class AddTransactionViewModel(
         ,marginAnnualRate: Double
         ,marginLotId: String
         ,marginRepaymentLotId: String
-        ,marginRepayment: Double, marginSelfFunded: Double, marginSelfFundedOverridden: Boolean, marginActualInterest: Double, shortBorrowPrincipal: Double, shortBorrowAnnualRate: Double, shortLotId: String, shortCoverLotId: String, shortCoverShares: Double, shortCompensationLotId: String, shortCompensation: Double
+        ,marginRepayment: Double, marginSelfFunded: Double, marginSelfFundedOverridden: Boolean, marginActualInterest: Double, shortBorrowPrincipal: Double, shortBorrowAnnualRate: Double, shortLotId: String, shortCoverLotId: String, shortCoverShares: Double, shortCompensationLotId: String, shortCompensation: Double,
+        market: String
     ): String? {
         val normalizedStockCode = canonicalStockCode(stockCode)
-        val inferredMarket = StockMarket.inferFromCode(normalizedStockCode)
+        val inferredMarket = StockMarket.normalize(market)
         val existingStock = stockDao.getStockByCode(normalizedStockCode, inferredMarket)
         val candidateStock = when {
             existingStock == null -> Stock(
                 name = stockName,
                 code = normalizedStockCode,
                 market = inferredMarket,
+                // A suggested A-share is not in the bundled list yet; keep its board
+                // so history and exchange grouping stay correct.
+                exchange = if (StockMarket.isCn(inferredMarket)) {
+                    StockExchange.fromCnCode(normalizedStockCode)
+                } else {
+                    StockExchange.UNKNOWN
+                },
                 industry = ""
             )
             StockMarket.normalize(existingStock.market) != inferredMarket ->
@@ -803,13 +903,14 @@ class AddTransactionViewModel(
         ,marginAnnualRate: Double
         ,marginLotId: String
         ,marginRepaymentLotId: String
-        ,marginRepayment: Double, marginSelfFunded: Double, marginSelfFundedOverridden: Boolean, marginActualInterest: Double, shortBorrowPrincipal: Double, shortBorrowAnnualRate: Double, shortLotId: String, shortCoverLotId: String, shortCoverShares: Double, shortCompensationLotId: String, shortCompensation: Double
+        ,marginRepayment: Double, marginSelfFunded: Double, marginSelfFundedOverridden: Boolean, marginActualInterest: Double, shortBorrowPrincipal: Double, shortBorrowAnnualRate: Double, shortLotId: String, shortCoverLotId: String, shortCoverShares: Double, shortCompensationLotId: String, shortCompensation: Double,
+        market: String
     ): String? {
         val targetTransactionId = transactionId ?: return EDIT_TRANSACTION_MISSING
         val originalTransaction = stockDao.getTransactionById(targetTransactionId).firstOrNull()
             ?: return markEditTransactionMissing()
         val normalizedStockCode = canonicalStockCode(stockCode)
-        val targetMarket = StockMarket.inferFromCode(normalizedStockCode)
+        val targetMarket = StockMarket.normalize(market)
         val targetStock = stockDao.getStockByCode(normalizedStockCode, targetMarket)
             ?: return "找不到股票資料，無法更新交易"
         val normalizedTargetStock = targetStock.copy(market = targetMarket)
@@ -887,6 +988,7 @@ class AddTransactionViewModel(
             candidate = candidate
         )
 
+        com.rsps1008.stockify.data.CnTradingRules.validateT1Sells(transactions)?.let { return it }
         com.rsps1008.stockify.data.FinancingTransactionValidationSupport.validate(transactions)?.let {
             return it
         }
