@@ -32,3 +32,7 @@ Stockify-Web/
 
 # Screenshots captured while verifying UI on a device
 /shots/
+
+# Local Gradle daemon toolchain override (forces JDK 25, must not reach CI)
+/gradle/gradle-daemon-jvm.properties
+/gradle/gradle-daemon-jvm.properties.off
