@@ -583,8 +583,17 @@ class OfflineStockRepository(
                     ?: transaction.buyPrice
                 (prevClosePrice - costPerShare) * transaction.buyShares
             }
-        val dailyPL = dailyChange * (shares - shortSummary.outstandingShares) +
-            boughtTodayBasisCorrection
+        // 收盤後行情仍帶著上一交易日的漲跌；週末或開盤前若照算，
+        // 會把上一個交易日的漲跌當成「今天」的損益並整日不動。
+        val sessionStarted = MarketSessionSupport.hasSessionStartedToday(
+            stock.market,
+            currentDateMillis
+        )
+        val dailyPL = if (sessionStarted) {
+            dailyChange * (shares - shortSummary.outstandingShares) + boughtTodayBasisCorrection
+        } else {
+            0.0
+        }
 
         return HoldingInfo(
             stock = stock,
